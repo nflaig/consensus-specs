@@ -218,9 +218,11 @@ def is_payload_timely(store: Store, root: Root) -> bool:
 ```python
 def get_parent_payload_status(store: Store, block: BeaconBlock) -> PayloadStatus:
     parent = store.blocks[block.parent_root]
-    parent_block_hash = block.body.execution_payload_commitment.message.parent_block_hash
-    message_block_hash = parent.body.execution_payload_commitment.message.block_hash
-    return PAYLOAD_STATUS_FULL if parent_block_hash == message_block_hash else PAYLOAD_STATUS_EMPTY
+    parent_block_hash = block.body.execution_payload_commitment.parent_block_hash
+    commitment_block_hash = parent.body.execution_payload_commitment.block_hash
+    return (
+        PAYLOAD_STATUS_FULL if parent_block_hash == commitment_block_hash else PAYLOAD_STATUS_EMPTY
+    )
 ```
 
 ### New `is_parent_node_full`
@@ -503,14 +505,14 @@ def on_block(store: Store, signed_block: SignedBeaconBlock) -> None:
 
     # Check if this blocks builds on empty or full parent block
     parent_block = store.blocks[block.parent_root]
-    commitment = block.body.execution_payload_commitment.message
-    parent_commitment = parent_block.body.execution_payload_commitment.message
+    payload_commitment = block.body.execution_payload_commitment
+    parent_commitment = parent_block.body.execution_payload_commitment
     # Make a copy of the state to avoid mutability issues
     if is_parent_node_full(store, block):
         assert block.parent_root in store.execution_payload_states
         state = copy(store.execution_payload_states[block.parent_root])
     else:
-        assert commitment.parent_block_hash == parent_commitment.parent_block_hash
+        assert payload_commitment.parent_block_hash == parent_commitment.parent_block_hash
         state = copy(store.block_states[block.parent_root])
 
     # Blocks cannot be in the future. If they are, their consideration must be delayed until they are in the past.
@@ -688,12 +690,10 @@ def validate_merge_block(block: BeaconBlock) -> None:
     if TERMINAL_BLOCK_HASH != Hash32():
         # If `TERMINAL_BLOCK_HASH` is used as an override, the activation epoch must be reached.
         assert compute_epoch_at_slot(block.slot) >= TERMINAL_BLOCK_HASH_ACTIVATION_EPOCH
-        assert (
-            block.body.execution_payload_commitment.message.parent_block_hash == TERMINAL_BLOCK_HASH
-        )
+        assert block.body.execution_payload_commitment.parent_block_hash == TERMINAL_BLOCK_HASH
         return
 
-    pow_block = get_pow_block(block.body.execution_payload_commitment.message.parent_block_hash)
+    pow_block = get_pow_block(block.body.execution_payload_commitment.parent_block_hash)
     # Check if `pow_block` is available
     assert pow_block is not None
     pow_parent = get_pow_block(pow_block.parent_hash)
