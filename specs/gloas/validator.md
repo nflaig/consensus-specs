@@ -4,24 +4,25 @@
 
 <!-- mdformat-toc start --slug=github --no-anchors --maxlevel=6 --minlevel=2 -->
 
-- [Introduction](#introduction)
-- [Configuration](#configuration)
-  - [Time parameters](#time-parameters)
-- [Validator assignment](#validator-assignment)
-  - [Payload timeliness committee](#payload-timeliness-committee)
-  - [Lookahead](#lookahead)
-- [Beacon chain responsibilities](#beacon-chain-responsibilities)
-  - [Attestation](#attestation)
-  - [Sync Committee participations](#sync-committee-participations)
-  - [Block proposal](#block-proposal)
-    - [Constructing `signed_execution_payload_commitment`](#constructing-signed_execution_payload_commitment)
-    - [Constructing `payload_attestations`](#constructing-payload_attestations)
-  - [Payload timeliness attestation](#payload-timeliness-attestation)
-    - [Constructing a payload attestation](#constructing-a-payload-attestation)
-- [Modified functions](#modified-functions)
-  - [Modified `prepare_execution_payload`](#modified-prepare_execution_payload)
-- [Data column sidecars](#data-column-sidecars)
-  - [Modified `get_data_column_sidecars_from_column_sidecar`](#modified-get_data_column_sidecars_from_column_sidecar)
+- [Gloas -- Honest Validator](#gloas----honest-validator)
+  - [Introduction](#introduction)
+  - [Configuration](#configuration)
+    - [Time parameters](#time-parameters)
+  - [Validator assignment](#validator-assignment)
+    - [Payload timeliness committee](#payload-timeliness-committee)
+    - [Lookahead](#lookahead)
+  - [Beacon chain responsibilities](#beacon-chain-responsibilities)
+    - [Attestation](#attestation)
+    - [Sync Committee participations](#sync-committee-participations)
+    - [Block proposal](#block-proposal)
+      - [Constructing `execution_payload_commitment`](#constructing-execution_payload_commitment)
+      - [Constructing `payload_attestations`](#constructing-payload_attestations)
+    - [Payload timeliness attestation](#payload-timeliness-attestation)
+      - [Constructing a payload attestation](#constructing-a-payload-attestation)
+  - [Modified functions](#modified-functions)
+    - [Modified `prepare_execution_payload`](#modified-prepare_execution_payload)
+  - [Data column sidecars](#data-column-sidecars)
+    - [Modified `get_data_column_sidecars_from_column_sidecar`](#modified-get_data_column_sidecars_from_column_sidecar)
 
 <!-- mdformat-toc end -->
 
@@ -116,20 +117,19 @@ any slot during which `is_proposer(state, validator_index)` returns `True`. The
 mechanism to prepare this beacon block and related sidecars differs from
 previous forks as follows
 
-#### Constructing `signed_execution_payload_commitment`
+#### Constructing `execution_payload_commitment`
 
-To obtain `signed_execution_payload_commitment`, a block proposer building a
-block on top of a `state` MUST take the following actions in order to construct
-the `signed_execution_payload_commitment` field in `BeaconBlockBody`:
+To obtain `execution_payload_commitment`, a block proposer building a block on
+top of a `state` MUST take the following actions in order to construct the
+`execution_payload_commitment` field in `BeaconBlockBody`:
 
-- The `signed_execution_payload_commitment` MUST satisfy the verification
-  conditions found in `process_execution_payload_commitment`, that is:
-  - The signature is valid with respect to the contained public key.
+- The `execution_payload_commitment` MUST satisfy the verification conditions
+  found in `process_execution_payload_commitment`, that is:
   - The header slot is for the proposal block slot.
   - The header parent block hash equals the state's `latest_block_hash`.
   - The header parent block root equals the current block's `parent_root`.
 - Select one commitment and set
-  `body.signed_execution_payload_commitment = signed_execution_payload_commitment`.
+  `body.execution_payload_commitment = execution_payload_commitment`.
 
 #### Constructing `payload_attestations`
 

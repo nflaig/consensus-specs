@@ -202,7 +202,7 @@ regards to the `ExecutionPayload` are removed:
     `block.body.execution_payload`).
 
 And instead the following validations are set in place with the alias
-`payload_commitment = signed_execution_payload_commitment.message`:
+`payload_commitment = execution_payload_commitment.message`:
 
 - If `execution_payload` verification of block's execution payload parent by an
   execution node **is complete**:
@@ -232,9 +232,9 @@ The following validations MUST pass before forwarding the
   `envelope.slot >= compute_start_slot_at_epoch(store.finalized_checkpoint.epoch)`
 
 Let `block` be the block with `envelope.beacon_block_root`. Let
-`payload_commitment` alias
-`block.body.signed_execution_payload_commitment.message` (notice that this can
-be obtained from the `state.latest_execution_payload_commitment`)
+`payload_commitment` alias `block.body.execution_payload_commitment.message`
+(notice that this can be obtained from the
+`state.latest_execution_payload_commitment`)
 
 - _[REJECT]_ `block` passes validation.
 - _[REJECT]_ `block.slot` equals `envelope.slot`.

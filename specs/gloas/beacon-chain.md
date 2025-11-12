@@ -17,7 +17,6 @@
     - [`PayloadAttestationMessage`](#payloadattestationmessage)
     - [`IndexedPayloadAttestation`](#indexedpayloadattestation)
     - [`ExecutionPayloadCommitment`](#executionpayloadcommitment)
-    - [`SignedExecutionPayloadCommitment`](#signedexecutionpayloadcommitment)
     - [`ExecutionPayloadEnvelope`](#executionpayloadenvelope)
     - [`SignedExecutionPayloadEnvelope`](#signedexecutionpayloadenvelope)
   - [Modified containers](#modified-containers)
@@ -43,10 +42,8 @@
     - [Modified `process_epoch`](#modified-process_epoch)
   - [Block processing](#block-processing)
     - [Withdrawals](#withdrawals)
-      - [Modified `get_expected_withdrawals`](#modified-get_expected_withdrawals)
       - [Modified `process_withdrawals`](#modified-process_withdrawals)
     - [Execution payload commitment](#execution-payload-commitment)
-      - [New `verify_execution_payload_commitment_signature`](#new-verify_execution_payload_commitment_signature)
       - [New `process_execution_payload_commitment`](#new-process_execution_payload_commitment)
     - [Operations](#operations)
       - [Modified `process_operations`](#modified-process_operations)
@@ -147,14 +144,6 @@ class ExecutionPayloadCommitment(Container):
     blob_kzg_commitments_root: Root
 ```
 
-#### `SignedExecutionPayloadCommitment`
-
-```python
-class SignedExecutionPayloadCommitment(Container):
-    message: ExecutionPayloadCommitment
-    signature: BLSSignature
-```
-
 #### `ExecutionPayloadEnvelope`
 
 ```python
@@ -202,7 +191,7 @@ class BeaconBlockBody(Container):
     # [Modified in Gloas:EIP7732]
     # Removed `execution_requests`
     # [New in Gloas:EIP7732]
-    signed_execution_payload_commitment: SignedExecutionPayloadCommitment
+    execution_payload_commitment: ExecutionPayloadCommitment
     # [New in Gloas:EIP7732]
     payload_attestations: List[PayloadAttestation, MAX_PAYLOAD_ATTESTATIONS]
 ```
@@ -581,85 +570,6 @@ def process_block(state: BeaconState, block: BeaconBlock) -> None:
 
 #### Withdrawals
 
-##### Modified `get_expected_withdrawals`
-
-```python
-def get_expected_withdrawals(state: BeaconState) -> Tuple[Sequence[Withdrawal], uint64]:
-    epoch = get_current_epoch(state)
-    withdrawal_index = state.next_withdrawal_index
-    validator_index = state.next_withdrawal_validator_index
-    withdrawals: List[Withdrawal] = []
-    processed_partial_withdrawals_count = 0
-
-    # Sweep for pending partial withdrawals
-    bound = min(
-        len(withdrawals) + MAX_PENDING_PARTIALS_PER_WITHDRAWALS_SWEEP,
-        MAX_WITHDRAWALS_PER_PAYLOAD - 1,
-    )
-    for withdrawal in state.pending_partial_withdrawals:
-        if withdrawal.withdrawable_epoch > epoch or len(withdrawals) == bound:
-            break
-
-        validator = state.validators[withdrawal.validator_index]
-        has_sufficient_effective_balance = validator.effective_balance >= MIN_ACTIVATION_BALANCE
-        total_withdrawn = sum(
-            w.amount for w in withdrawals if w.validator_index == withdrawal.validator_index
-        )
-        balance = state.balances[withdrawal.validator_index] - total_withdrawn
-        has_excess_balance = balance > MIN_ACTIVATION_BALANCE
-        if (
-            validator.exit_epoch == FAR_FUTURE_EPOCH
-            and has_sufficient_effective_balance
-            and has_excess_balance
-        ):
-            withdrawable_balance = min(balance - MIN_ACTIVATION_BALANCE, withdrawal.amount)
-            withdrawals.append(
-                Withdrawal(
-                    index=withdrawal_index,
-                    validator_index=withdrawal.validator_index,
-                    address=ExecutionAddress(validator.withdrawal_credentials[12:]),
-                    amount=withdrawable_balance,
-                )
-            )
-            withdrawal_index += WithdrawalIndex(1)
-
-        processed_partial_withdrawals_count += 1
-
-    # Sweep for remaining.
-    bound = min(len(state.validators), MAX_VALIDATORS_PER_WITHDRAWALS_SWEEP)
-    for _ in range(bound):
-        validator = state.validators[validator_index]
-        total_withdrawn = sum(w.amount for w in withdrawals if w.validator_index == validator_index)
-        balance = state.balances[validator_index] - total_withdrawn
-        if is_fully_withdrawable_validator(validator, balance, epoch):
-            withdrawals.append(
-                Withdrawal(
-                    index=withdrawal_index,
-                    validator_index=validator_index,
-                    address=ExecutionAddress(validator.withdrawal_credentials[12:]),
-                    amount=balance,
-                )
-            )
-            withdrawal_index += WithdrawalIndex(1)
-        elif is_partially_withdrawable_validator(validator, balance):
-            withdrawals.append(
-                Withdrawal(
-                    index=withdrawal_index,
-                    validator_index=validator_index,
-                    address=ExecutionAddress(validator.withdrawal_credentials[12:]),
-                    amount=balance - get_max_effective_balance(validator),
-                )
-            )
-            withdrawal_index += WithdrawalIndex(1)
-        if len(withdrawals) == MAX_WITHDRAWALS_PER_PAYLOAD:
-            break
-        validator_index = ValidatorIndex((validator_index + 1) % len(state.validators))
-    return (
-        withdrawals,
-        processed_partial_withdrawals_count,
-    )
-```
-
 ##### Modified `process_withdrawals`
 
 *Note*: This is modified to only take the `state` as parameter. Withdrawals are
@@ -712,29 +622,11 @@ def process_withdrawals(
 
 #### Execution payload commitment
 
-##### New `verify_execution_payload_commitment_signature`
-
-```python
-def verify_execution_payload_commitment_signature(
-    state: BeaconState, signed_payload_commitment: SignedExecutionPayloadCommitment
-) -> bool:
-    signing_root = compute_signing_root(
-        signed_payload_commitment.message, get_domain(state, DOMAIN_PAYLOAD_COMMITMENT)
-    )
-    return bls.Verify(
-        signed_payload_commitment.message.pubkey, signing_root, signed_payload_commitment.signature
-    )
-```
-
 ##### New `process_execution_payload_commitment`
 
 ```python
 def process_execution_payload_commitment(state: BeaconState, block: BeaconBlock) -> None:
-    signed_payload_commitment = block.body.signed_execution_payload_commitment
-    payload_commitment = signed_payload_commitment.message
-
-    # Verify the signature
-    assert verify_execution_payload_commitment_signature(state, signed_payload_commitment)
+    payload_commitment = block.body.execution_payload_commitment
 
     # Verify that the commitment is for the current slot
     assert payload_commitment.slot == block.slot
