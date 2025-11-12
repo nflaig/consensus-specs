@@ -122,19 +122,14 @@ To obtain `signed_execution_payload_commitment`, a block proposer building a
 block on top of a `state` MUST take the following actions in order to construct
 the `signed_execution_payload_commitment` field in `BeaconBlockBody`:
 
-- Listen to the `execution_payload_commitment` gossip global topic and save an
-  accepted `signed_execution_payload_commitment`. The block proposer MAY obtain
-  these signed messages by other off-protocol means.
 - The `signed_execution_payload_commitment` MUST satisfy the verification
   conditions found in `process_execution_payload_commitment`, that is:
+  - The signature is valid with respect to the contained public key.
   - The header slot is for the proposal block slot.
   - The header parent block hash equals the state's `latest_block_hash`.
   - The header parent block root equals the current block's `parent_root`.
 - Select one commitment and set
   `body.signed_execution_payload_commitment = signed_execution_payload_commitment`.
-
-*Note:* The execution address encoded in the `fee_recipient` field in the
-`signed_execution_payload_commitment.message` will receive the payment.
 
 #### Constructing `payload_attestations`
 

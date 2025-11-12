@@ -151,11 +151,10 @@ The `beacon_block` topic is updated to support the modified type
 The new topics along with the type of the `data` field of a gossipsub message
 are given in this table:
 
-| Name                           | Message Type                       |
-| ------------------------------ | ---------------------------------- |
-| `execution_payload_commitment` | `SignedExecutionPayloadCommitment` |
-| `execution_payload`            | `SignedExecutionPayloadEnvelope`   |
-| `payload_attestation_message`  | `PayloadAttestationMessage`        |
+| Name                          | Message Type                     |
+| ----------------------------- | -------------------------------- |
+| `execution_payload`           | `SignedExecutionPayloadEnvelope` |
+| `payload_attestation_message` | `PayloadAttestationMessage`      |
 
 ##### Global topics
 
@@ -203,14 +202,15 @@ regards to the `ExecutionPayload` are removed:
     `block.body.execution_payload`).
 
 And instead the following validations are set in place with the alias
-`commitment = signed_execution_payload_commitment.message`:
+`payload_commitment = signed_execution_payload_commitment.message`:
 
 - If `execution_payload` verification of block's execution payload parent by an
   execution node **is complete**:
   - [REJECT] The block's execution payload parent (defined by
-    `commitment.parent_block_hash`) passes all validation.
-- [REJECT] The commitment's parent (defined by `commitment.parent_block_root`)
-  equals the block's parent (defined by `block.parent_root`).
+    `payload_commitment.parent_block_hash`) passes all validation.
+- [REJECT] The payload commitment's parent (defined by
+  `payload_commitment.parent_block_root`) equals the block's parent (defined by
+  `block.parent_root`).
 
 ###### `execution_payload`
 
@@ -231,14 +231,15 @@ The following validations MUST pass before forwarding the
   finalized slot -- i.e. validate that
   `envelope.slot >= compute_start_slot_at_epoch(store.finalized_checkpoint.epoch)`
 
-Let `block` be the block with `envelope.beacon_block_root`. Let `commitment`
-alias `block.body.signed_execution_payload_commitment.message` (notice that this
-can be obtained from the `state.latest_execution_payload_commitment`)
+Let `block` be the block with `envelope.beacon_block_root`. Let
+`payload_commitment` alias
+`block.body.signed_execution_payload_commitment.message` (notice that this can
+be obtained from the `state.latest_execution_payload_commitment`)
 
 - _[REJECT]_ `block` passes validation.
 - _[REJECT]_ `block.slot` equals `envelope.slot`.
-- _[REJECT]_ `envelope.pubkey == commitment.pubkey`
-- _[REJECT]_ `payload.block_hash == commitment.block_hash`
+- _[REJECT]_ `envelope.pubkey == payload_commitment.pubkey`
+- _[REJECT]_ `payload.block_hash == payload_commitment.block_hash`
 - _[REJECT]_ `signed_execution_payload_envelope.signature` is valid with respect
   to the public key in the payload commitment.
 

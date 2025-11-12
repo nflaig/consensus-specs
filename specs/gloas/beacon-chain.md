@@ -65,8 +65,8 @@
 
 Gloas is a consensus-layer upgrade containing a number of features. Including:
 
-- [EIP-7732](https://eips.ethereum.org/EIPS/eip-7732): Execution Payload-Block
-  Separation
+- [EIP-7732](https://eips.ethereum.org/EIPS/eip-7732): Enshrined
+  Proposer-Builder Separation
 
 *Note*: This specification is built upon [Fulu](../fulu/beacon-chain.md).
 
@@ -141,7 +141,6 @@ class ExecutionPayloadCommitment(Container):
     parent_block_hash: Hash32
     parent_block_root: Root
     block_hash: Hash32
-    fee_recipient: ExecutionAddress
     gas_limit: uint64
     pubkey: BLSPubkey
     slot: Slot
@@ -681,8 +680,6 @@ def process_withdrawals(
     if not is_parent_block_full(state):
         return
 
-    # [Modified in Gloas:EIP7732]
-    # Get information about the expected withdrawals
     withdrawals, processed_partial_withdrawals_count = get_expected_withdrawals(state)
     withdrawals_list = List[Withdrawal, MAX_WITHDRAWALS_PER_PAYLOAD](withdrawals)
     state.latest_withdrawals_root = hash_tree_root(withdrawals_list)
@@ -718,33 +715,35 @@ def process_withdrawals(
 ##### New `verify_execution_payload_commitment_signature`
 
 ```python
-def verify_execution_payload_bid_signature(
-    state: BeaconState, signed_commitment: SignedExecutionPayloadCommitment
+def verify_execution_payload_commitment_signature(
+    state: BeaconState, signed_payload_commitment: SignedExecutionPayloadCommitment
 ) -> bool:
     signing_root = compute_signing_root(
-        signed_commitment.message, get_domain(state, DOMAIN_PAYLOAD_COMMITMENT)
+        signed_payload_commitment.message, get_domain(state, DOMAIN_PAYLOAD_COMMITMENT)
     )
-    return bls.Verify(signed_commitment.message.pubkey, signing_root, signed_commitment.signature)
+    return bls.Verify(
+        signed_payload_commitment.message.pubkey, signing_root, signed_payload_commitment.signature
+    )
 ```
 
 ##### New `process_execution_payload_commitment`
 
 ```python
 def process_execution_payload_commitment(state: BeaconState, block: BeaconBlock) -> None:
-    signed_commitment = block.body.signed_execution_payload_commitment
-    commitment = signed_commitment.message
+    signed_payload_commitment = block.body.signed_execution_payload_commitment
+    payload_commitment = signed_payload_commitment.message
 
     # Verify the signature
-    assert verify_execution_payload_commitment_signature(state, signed_commitment)
+    assert verify_execution_payload_commitment_signature(state, signed_payload_commitment)
 
     # Verify that the commitment is for the current slot
-    assert commitment.slot == block.slot
+    assert payload_commitment.slot == block.slot
     # Verify that the commitment is for the right parent block
-    assert commitment.parent_block_hash == state.latest_block_hash
-    assert commitment.parent_block_root == block.parent_root
+    assert payload_commitment.parent_block_hash == state.latest_block_hash
+    assert payload_commitment.parent_block_root == block.parent_root
 
     # Cache the signed execution payload commitment
-    state.latest_execution_payload_commitment = commitment
+    state.latest_execution_payload_commitment = payload_commitment
 ```
 
 #### Operations
@@ -932,18 +931,20 @@ def process_execution_payload(
     assert envelope.beacon_block_root == hash_tree_root(state.latest_block_header)
     assert envelope.slot == state.slot
 
-    # Verify consistency with the committed commitment
-    commitment = state.latest_execution_payload_commitment
+    # Verify consistency with the payload commitment
+    payload_commitment = state.latest_execution_payload_commitment
     assert envelope.pubkey == commitment.pubkey
-    assert commitment.blob_kzg_commitments_root == hash_tree_root(envelope.blob_kzg_commitments)
+    assert payload_commitment.blob_kzg_commitments_root == hash_tree_root(
+        envelope.blob_kzg_commitments
+    )
 
     # Verify the withdrawals root
     assert hash_tree_root(payload.withdrawals) == state.latest_withdrawals_root
 
     # Verify the gas_limit
-    assert commitment.gas_limit == payload.gas_limit
+    assert payload_commitment.gas_limit == payload.gas_limit
     # Verify the block hash
-    assert commitment.block_hash == payload.block_hash
+    assert payload_commitment.block_hash == payload.block_hash
     # Verify consistency of the parent hash with respect to the previous execution payload
     assert payload.parent_hash == state.latest_block_hash
     # Verify prev_randao
