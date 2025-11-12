@@ -14,7 +14,7 @@
   - [Attestation](#attestation)
   - [Sync Committee participations](#sync-committee-participations)
   - [Block proposal](#block-proposal)
-    - [Constructing `signed_execution_payload_bid`](#constructing-signed_execution_payload_bid)
+    - [Constructing `signed_execution_payload_commitment`](#constructing-signed_execution_payload_commitment)
     - [Constructing `payload_attestations`](#constructing-payload_attestations)
     - [Blob sidecars](#blob-sidecars)
   - [Payload timeliness attestation](#payload-timeliness-attestation)
@@ -119,29 +119,25 @@ any slot during which `is_proposer(state, validator_index)` returns `True`. The
 mechanism to prepare this beacon block and related sidecars differs from
 previous forks as follows
 
-#### Constructing `signed_execution_payload_bid`
+#### Constructing `signed_execution_payload_commitment`
 
-To obtain `signed_execution_payload_bid`, a block proposer building a block on
-top of a `state` MUST take the following actions in order to construct the
-`signed_execution_payload_bid` field in `BeaconBlockBody`:
+To obtain `signed_execution_payload_commitment`, a block proposer building a
+block on top of a `state` MUST take the following actions in order to construct
+the `signed_execution_payload_commitment` field in `BeaconBlockBody`:
 
-- Listen to the `execution_payload_bid` gossip global topic and save an accepted
-  `signed_execution_payload_bid` from a builder. The block proposer MAY obtain
-  these signed messages by other off-protocol means.
-- The `signed_execution_payload_bid` MUST satisfy the verification conditions
-  found in `process_execution_payload_bid`, that is:
-  - For external builders, the header signature MUST be valid.
-  - For self-builds, the signature MUST be `bls.G2_POINT_AT_INFINITY` and the
-    bid amount MUST be zero.
-  - The builder balance can cover the header value.
+- Listen to the `execution_payload_commitment` gossip global topic and save an
+  accepted `signed_execution_payload_commitment` from a builder. The block
+  proposer MAY obtain these signed messages by other off-protocol means.
+- The `signed_execution_payload_commitment` MUST satisfy the verification
+  conditions found in `process_execution_payload_commitment`, that is:
   - The header slot is for the proposal block slot.
   - The header parent block hash equals the state's `latest_block_hash`.
   - The header parent block root equals the current block's `parent_root`.
-- Select one bid and set
-  `body.signed_execution_payload_bid = signed_execution_payload_bid`.
+- Select one commitment and set
+  `body.signed_execution_payload_commitment = signed_execution_payload_commitment`.
 
 *Note:* The execution address encoded in the `fee_recipient` field in the
-`signed_execution_payload_bid.message` will receive the builder payment.
+`signed_execution_payload_commitment.message` will receive the builder payment.
 
 #### Constructing `payload_attestations`
 
@@ -237,8 +233,8 @@ def prepare_execution_payload(
     suggested_fee_recipient: ExecutionAddress,
     execution_engine: ExecutionEngine,
 ) -> Optional[PayloadId]:
-    # Verify consistency of the parent hash with respect to the previous execution payload bid
-    parent_hash = state.latest_execution_payload_bid.block_hash
+    # Verify consistency of the parent hash with respect to the previous execution payload commitment
+    parent_hash = state.latest_execution_payload_commitment.block_hash
 
     # [Modified in Gloas:EIP7732]
     # Set the forkchoice head and initiate the payload build process
