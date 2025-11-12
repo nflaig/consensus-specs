@@ -10,7 +10,6 @@
 - [Preset](#preset)
   - [Misc](#misc)
   - [Max operations per block](#max-operations-per-block)
-  - [State list lengths](#state-list-lengths)
 - [Containers](#containers)
   - [New containers](#new-containers)
     - [`PayloadAttestationData`](#payloadattestationdata)
@@ -26,12 +25,10 @@
     - [`BeaconState`](#beaconstate)
 - [Helper functions](#helper-functions)
   - [Predicates](#predicates)
-    - [Modified `has_compounding_withdrawal_credential`](#modified-has_compounding_withdrawal_credential)
     - [New `is_attestation_same_slot`](#new-is_attestation_same_slot)
     - [New `is_valid_indexed_payload_attestation`](#new-is_valid_indexed_payload_attestation)
     - [New `is_parent_block_full`](#new-is_parent_block_full)
   - [Misc](#misc-1)
-    - [Modified `get_pending_balance_to_withdraw`](#modified-get_pending_balance_to_withdraw)
     - [New `compute_balance_weighted_selection`](#new-compute_balance_weighted_selection)
     - [New `compute_balance_weighted_acceptance`](#new-compute_balance_weighted_acceptance)
     - [Modified `compute_proposer_indices`](#modified-compute_proposer_indices)
@@ -58,7 +55,6 @@
       - [Payload Attestations](#payload-attestations)
         - [New `process_payload_attestation`](#new-process_payload_attestation)
       - [Proposer Slashing](#proposer-slashing)
-        - [Modified `process_proposer_slashing`](#modified-process_proposer_slashing)
     - [Modified `is_merge_transition_complete`](#modified-is_merge_transition_complete)
     - [Modified `validate_merge_block`](#modified-validate_merge_block)
   - [Execution payload processing](#execution-payload-processing)
@@ -71,8 +67,8 @@
 
 Gloas is a consensus-layer upgrade containing a number of features. Including:
 
-- [EIP-7732](https://eips.ethereum.org/EIPS/eip-7732): Enshrined
-  Proposer-Builder Separation
+- [EIP-7732](https://eips.ethereum.org/EIPS/eip-7732): Execution Payload-Block
+  Separation
 
 *Note*: This specification is built upon [Fulu](../fulu/beacon-chain.md).
 
@@ -80,10 +76,10 @@ Gloas is a consensus-layer upgrade containing a number of features. Including:
 
 ### Domain types
 
-| Name                    | Value                      |
-| ----------------------- | -------------------------- |
-| `DOMAIN_BEACON_BUILDER` | `DomainType('0x1B000000')` |
-| `DOMAIN_PTC_ATTESTER`   | `DomainType('0x0C000000')` |
+| Name                        | Value                      |
+| --------------------------- | -------------------------- |
+| `DOMAIN_PAYLOAD_COMMITMENT` | `DomainType('0x1B000000')` |
+| `DOMAIN_PTC_ATTESTER`       | `DomainType('0x0C000000')` |
 
 ## Preset
 
@@ -98,12 +94,6 @@ Gloas is a consensus-layer upgrade containing a number of features. Including:
 | Name                       | Value |
 | -------------------------- | ----- |
 | `MAX_PAYLOAD_ATTESTATIONS` | `4`   |
-
-### State list lengths
-
-| Name                                | Value                         | Unit                        |
-| ----------------------------------- | ----------------------------- | --------------------------- |
-| `BUILDER_PENDING_WITHDRAWALS_LIMIT` | `uint64(2**20)` (= 1,048,576) | Builder pending withdrawals |
 
 ## Containers
 
@@ -155,7 +145,7 @@ class ExecutionPayloadCommitment(Container):
     block_hash: Hash32
     fee_recipient: ExecutionAddress
     gas_limit: uint64
-    builder_pubkey: BLSPubkey
+    pubkey: BLSPubkey
     slot: Slot
     blob_kzg_commitments_root: Root
 ```
@@ -174,7 +164,7 @@ class SignedExecutionPayloadCommitment(Container):
 class ExecutionPayloadEnvelope(Container):
     payload: ExecutionPayload
     execution_requests: ExecutionRequests
-    builder_pubkey: BLSPubkey
+    pubkey: BLSPubkey
     beacon_block_root: Root
     slot: Slot
     blob_kzg_commitments: List[KZGCommitment, MAX_BLOB_COMMITMENTS_PER_BLOCK]
@@ -277,16 +267,6 @@ class BeaconState(Container):
 
 ### Predicates
 
-#### Modified `has_compounding_withdrawal_credential`
-
-```python
-def has_compounding_withdrawal_credential(validator: Validator) -> bool:
-    """
-    Check if ``validator`` has an 0x02 prefixed withdrawal credential.
-    """
-    return is_compounding_withdrawal_credential(validator.withdrawal_credentials)
-```
-
 #### New `is_attestation_same_slot`
 
 ```python
@@ -328,10 +308,10 @@ def is_valid_indexed_payload_attestation(
 
 #### New `is_parent_block_full`
 
-*Note*: This function returns true if the last committed payload commitment was
-fulfilled with a payload, which can only happen when both beacon block and
-payload were present. This function must be called on a beacon state before
-processing the execution payload commitment in the block.
+*Note*: This function returns true if the last payload commitment was fulfilled
+with a payload, which can only happen when both beacon block and payload were
+present. This function must be called on a beacon state before processing the
+execution payload commitment in the block.
 
 ```python
 def is_parent_block_full(state: BeaconState) -> bool:
@@ -339,34 +319,6 @@ def is_parent_block_full(state: BeaconState) -> bool:
 ```
 
 ### Misc
-
-#### Modified `get_pending_balance_to_withdraw`
-
-*Note*: `get_pending_balance_to_withdraw` is modified to account for pending
-builder payments.
-
-```python
-def get_pending_balance_to_withdraw(state: BeaconState, validator_index: ValidatorIndex) -> Gwei:
-    return (
-        sum(
-            withdrawal.amount
-            for withdrawal in state.pending_partial_withdrawals
-            if withdrawal.validator_index == validator_index
-        )
-        # [New in Gloas:EIP7732]
-        + sum(
-            withdrawal.amount
-            for withdrawal in state.builder_pending_withdrawals
-            if withdrawal.builder_index == validator_index
-        )
-        # [New in Gloas:EIP7732]
-        + sum(
-            payment.withdrawal.amount
-            for payment in state.builder_pending_payments
-            if payment.withdrawal.builder_index == validator_index
-        )
-    )
-```
 
 #### New `compute_balance_weighted_selection`
 
@@ -772,11 +724,9 @@ def verify_execution_payload_bid_signature(
     state: BeaconState, signed_commitment: SignedExecutionPayloadCommitment
 ) -> bool:
     signing_root = compute_signing_root(
-        signed_commitment.message, get_domain(state, DOMAIN_BEACON_BUILDER)
+        signed_commitment.message, get_domain(state, DOMAIN_PAYLOAD_COMMITMENT)
     )
-    return bls.Verify(
-        signed_commitment.message.builder_pubkey, signing_root, signed_commitment.signature
-    )
+    return bls.Verify(signed_commitment.message.pubkey, signing_root, signed_commitment.signature)
 ```
 
 ##### New `process_execution_payload_commitment`
@@ -846,9 +796,8 @@ def process_operations(state: BeaconState, body: BeaconBlockBody) -> None:
 
 ###### Modified `process_attestation`
 
-*Note*: The function is modified to track the weight for pending builder
-payments and to use the `index` field in the `AttestationData` to signal the
-payload availability.
+*Note*: The function is modified to use the `index` field in the
+`AttestationData` to signal the payload availability.
 
 ```python
 def process_attestation(state: BeaconState, attestation: Attestation) -> None:
@@ -887,11 +836,9 @@ def process_attestation(state: BeaconState, attestation: Attestation) -> None:
     if data.target.epoch == get_current_epoch(state):
         current_epoch_target = True
         epoch_participation = state.current_epoch_participation
-        payment = state.builder_pending_payments[SLOTS_PER_EPOCH + data.slot % SLOTS_PER_EPOCH]
     else:
         current_epoch_target = False
         epoch_participation = state.previous_epoch_participation
-        payment = state.builder_pending_payments[data.slot % SLOTS_PER_EPOCH]
 
     proposer_reward_numerator = 0
     for index in get_attesting_indices(state, attestation):
@@ -909,29 +856,12 @@ def process_attestation(state: BeaconState, attestation: Attestation) -> None:
                 # [New in Gloas:EIP7732]
                 will_set_new_flag = True
 
-        # [New in Gloas:EIP7732]
-        # Add weight for same-slot attestations when any new flag is set.
-        # This ensures each validator contributes exactly once per slot.
-        if (
-            will_set_new_flag
-            and is_attestation_same_slot(state, data)
-            and payment.withdrawal.amount > 0
-        ):
-            payment.weight += state.validators[index].effective_balance
-
     # Reward proposer
     proposer_reward_denominator = (
         (WEIGHT_DENOMINATOR - PROPOSER_WEIGHT) * WEIGHT_DENOMINATOR // PROPOSER_WEIGHT
     )
     proposer_reward = Gwei(proposer_reward_numerator // proposer_reward_denominator)
     increase_balance(state, get_beacon_proposer_index(state), proposer_reward)
-
-    # [New in Gloas:EIP7732]
-    # Update builder payment weight
-    if current_epoch_target:
-        state.builder_pending_payments[SLOTS_PER_EPOCH + data.slot % SLOTS_PER_EPOCH] = payment
-    else:
-        state.builder_pending_payments[data.slot % SLOTS_PER_EPOCH] = payment
 ```
 
 ##### Payload Attestations
@@ -956,45 +886,6 @@ def process_payload_attestation(
 ```
 
 ##### Proposer Slashing
-
-###### Modified `process_proposer_slashing`
-
-```python
-def process_proposer_slashing(state: BeaconState, proposer_slashing: ProposerSlashing) -> None:
-    header_1 = proposer_slashing.signed_header_1.message
-    header_2 = proposer_slashing.signed_header_2.message
-
-    # Verify header slots match
-    assert header_1.slot == header_2.slot
-    # Verify header proposer indices match
-    assert header_1.proposer_index == header_2.proposer_index
-    # Verify the headers are different
-    assert header_1 != header_2
-    # Verify the proposer is slashable
-    proposer = state.validators[header_1.proposer_index]
-    assert is_slashable_validator(proposer, get_current_epoch(state))
-    # Verify signatures
-    for signed_header in (proposer_slashing.signed_header_1, proposer_slashing.signed_header_2):
-        domain = get_domain(
-            state, DOMAIN_BEACON_PROPOSER, compute_epoch_at_slot(signed_header.message.slot)
-        )
-        signing_root = compute_signing_root(signed_header.message, domain)
-        assert bls.Verify(proposer.pubkey, signing_root, signed_header.signature)
-
-    # [New in Gloas:EIP7732]
-    # Remove the BuilderPendingPayment corresponding to
-    # this proposal if it is still in the 2-epoch window.
-    slot = header_1.slot
-    proposal_epoch = compute_epoch_at_slot(slot)
-    if proposal_epoch == get_current_epoch(state):
-        payment_index = SLOTS_PER_EPOCH + slot % SLOTS_PER_EPOCH
-        state.builder_pending_payments[payment_index] = BuilderPendingPayment()
-    elif proposal_epoch == get_previous_epoch(state):
-        payment_index = slot % SLOTS_PER_EPOCH
-        state.builder_pending_payments[payment_index] = BuilderPendingPayment()
-
-    slash_validator(state, header_1.proposer_index)
-```
 
 #### Modified `is_merge_transition_complete`
 
@@ -1052,18 +943,16 @@ def verify_execution_payload_envelope_signature(
     state: BeaconState, signed_envelope: SignedExecutionPayloadEnvelope
 ) -> bool:
     signing_root = compute_signing_root(
-        signed_envelope.message, get_domain(state, DOMAIN_BEACON_BUILDER)
+        signed_envelope.message, get_domain(state, DOMAIN_PAYLOAD_COMMITMENT)
     )
-    return bls.Verify(
-        signed_envelope.message.builder_pubkey, signing_root, signed_envelope.signature
-    )
+    return bls.Verify(signed_envelope.message.pubkey, signing_root, signed_envelope.signature)
 ```
 
 #### New `process_execution_payload`
 
 *Note*: `process_execution_payload` is now an independent check in state
-transition. It is called when importing a signed execution payload proposed by
-the builder of the current slot.
+transition. It is called when importing a signed execution payload proposed for
+the current slot.
 
 ```python
 def process_execution_payload(
@@ -1094,7 +983,7 @@ def process_execution_payload(
 
     # Verify consistency with the committed commitment
     commitment = state.latest_execution_payload_commitment
-    assert envelope.builder_index == commitment.builder_index
+    assert envelope.pubkey == commitment.pubkey
     assert commitment.blob_kzg_commitments_root == hash_tree_root(envelope.blob_kzg_commitments)
 
     # Verify the withdrawals root
@@ -1136,19 +1025,6 @@ def process_execution_payload(
     for_ops(requests.deposits, process_deposit_request)
     for_ops(requests.withdrawals, process_withdrawal_request)
     for_ops(requests.consolidations, process_consolidation_request)
-
-    # Queue the builder payment
-    payment = state.builder_pending_payments[SLOTS_PER_EPOCH + state.slot % SLOTS_PER_EPOCH]
-    amount = payment.withdrawal.amount
-    if amount > 0:
-        exit_queue_epoch = compute_exit_epoch_and_update_churn(state, amount)
-        payment.withdrawal.withdrawable_epoch = Epoch(
-            exit_queue_epoch + MIN_VALIDATOR_WITHDRAWABILITY_DELAY
-        )
-        state.builder_pending_withdrawals.append(payment.withdrawal)
-    state.builder_pending_payments[SLOTS_PER_EPOCH + state.slot % SLOTS_PER_EPOCH] = (
-        BuilderPendingPayment()
-    )
 
     # Cache the execution payload hash
     state.execution_payload_availability[state.slot % SLOTS_PER_HISTORICAL_ROOT] = 0b1

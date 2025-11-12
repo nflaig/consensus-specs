@@ -16,7 +16,6 @@
   - [Block proposal](#block-proposal)
     - [Constructing `signed_execution_payload_commitment`](#constructing-signed_execution_payload_commitment)
     - [Constructing `payload_attestations`](#constructing-payload_attestations)
-    - [Blob sidecars](#blob-sidecars)
   - [Payload timeliness attestation](#payload-timeliness-attestation)
     - [Constructing a payload attestation](#constructing-a-payload-attestation)
 - [Modified functions](#modified-functions)
@@ -84,8 +83,6 @@ future assignments by noting their assigned PTC slot.
 
 All validator responsibilities remain unchanged other than the following:
 
-- Proposers are no longer required to broadcast `DataColumnSidecar` objects, as
-  this becomes a builder's duty.
 - Some attesters are selected per slot to become PTC members, these validators
   must broadcast `PayloadAttestationMessage` objects during the assigned slot
   before the deadline of `get_attestation_due_ms(epoch)` milliseconds into the
@@ -126,8 +123,8 @@ block on top of a `state` MUST take the following actions in order to construct
 the `signed_execution_payload_commitment` field in `BeaconBlockBody`:
 
 - Listen to the `execution_payload_commitment` gossip global topic and save an
-  accepted `signed_execution_payload_commitment` from a builder. The block
-  proposer MAY obtain these signed messages by other off-protocol means.
+  accepted `signed_execution_payload_commitment`. The block proposer MAY obtain
+  these signed messages by other off-protocol means.
 - The `signed_execution_payload_commitment` MUST satisfy the verification
   conditions found in `process_execution_payload_commitment`, that is:
   - The header slot is for the proposal block slot.
@@ -137,7 +134,7 @@ the `signed_execution_payload_commitment` field in `BeaconBlockBody`:
   `body.signed_execution_payload_commitment = signed_execution_payload_commitment`.
 
 *Note:* The execution address encoded in the `fee_recipient` field in the
-`signed_execution_payload_commitment.message` will receive the builder payment.
+`signed_execution_payload_commitment.message` will receive the payment.
 
 #### Constructing `payload_attestations`
 
@@ -156,13 +153,6 @@ construct the `payload_attestations` field in `BeaconBlockBody`:
   `aggregation_bits` field by using the relative position of the validator
   indices with respect to the PTC that is obtained from
   `get_ptc(state, block_slot - 1)`.
-
-#### Blob sidecars
-
-The blob sidecars are no longer broadcast by the validator, and thus their
-construction is not necessary. This deprecates the corresponding sections from
-the Honest Validator specifications in the Fulu fork, moving them, albeit with
-some modifications, to the [Honest Builder](./builder.md) specifications.
 
 ### Payload timeliness attestation
 

@@ -84,7 +84,7 @@ def compute_fork_version(epoch: Epoch) -> Version:
 have been removed from `DataColumnSidecar` in Gloas as header and inclusion
 proof verifications are no longer required in ePBS. Instead, sidecars are
 validated by checking that the hash of `kzg_commitments` matches what's
-committed in the builder's commitment for the corresponding `beacon_block_root`.
+committed in the commitment for the corresponding `beacon_block_root`.
 
 ```python
 class DataColumnSidecar(Container):
@@ -226,7 +226,7 @@ The following validations MUST pass before forwarding the
   gossip or non-gossip sources) (a client MAY queue payload for processing once
   the block is retrieved).
 - _[IGNORE]_ The node has not seen another valid
-  `SignedExecutionPayloadEnvelope` for this block root from this builder.
+  `SignedExecutionPayloadEnvelope` for this block root.
 - _[IGNORE]_ The envelope is from a slot greater than or equal to the latest
   finalized slot -- i.e. validate that
   `envelope.slot >= compute_start_slot_at_epoch(store.finalized_checkpoint.epoch)`
@@ -237,10 +237,10 @@ can be obtained from the `state.latest_execution_payload_commitment`)
 
 - _[REJECT]_ `block` passes validation.
 - _[REJECT]_ `block.slot` equals `envelope.slot`.
-- _[REJECT]_ `envelope.builder_pubkey == commitment.builder_pubkey`
+- _[REJECT]_ `envelope.pubkey == commitment.pubkey`
 - _[REJECT]_ `payload.block_hash == commitment.block_hash`
 - _[REJECT]_ `signed_execution_payload_envelope.signature` is valid with respect
-  to the builder's public key.
+  to the public key in the payload commitment.
 
 ###### `payload_attestation_message`
 
@@ -288,11 +288,11 @@ The following validations MUST pass before forwarding the
 **Added in Gloas:**
 
 - _[IGNORE]_ The sidecar's `beacon_block_root` has been seen via a valid signed
-  execution payload header (builder's commitment).
+  execution payload header (payload commitment).
 - _[REJECT]_ The sidecars's `slot` matches the slot of the block with root
   `beacon_block_root`.
 - _[REJECT]_ The hash of the sidecar's `kzg_commitments` matches the
-  `blob_kzg_commitments_root` in the corresponding builder's commitment for
+  `blob_kzg_commitments_root` in the corresponding payload commitment for
   `sidecar.beacon_block_root`.
 
 **Removed from Fulu:**
