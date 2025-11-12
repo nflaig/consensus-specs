@@ -91,10 +91,6 @@ def upgrade_to_gloas(pre: fulu.BeaconState) -> BeaconState:
         # [New in Gloas:EIP7732]
         execution_payload_availability=[0b1 for _ in range(SLOTS_PER_HISTORICAL_ROOT)],
         # [New in Gloas:EIP7732]
-        builder_pending_payments=[BuilderPendingPayment() for _ in range(2 * SLOTS_PER_EPOCH)],
-        # [New in Gloas:EIP7732]
-        builder_pending_withdrawals=[],
-        # [New in Gloas:EIP7732]
         latest_block_hash=pre.latest_execution_payload_header.block_hash,
         # [New in Gloas:EIP7732]
         latest_withdrawals_root=Root(),

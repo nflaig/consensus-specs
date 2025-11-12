@@ -238,7 +238,7 @@ obtained from the `state.latest_execution_payload_bid`)
 
 - _[REJECT]_ `block` passes validation.
 - _[REJECT]_ `block.slot` equals `envelope.slot`.
-- _[REJECT]_ `envelope.builder_index == bid.builder_index`
+- _[REJECT]_ `envelope.builder_pubkey == bid.builder_pubkey`
 - _[REJECT]_ `payload.block_hash == bid.block_hash`
 - _[REJECT]_ `signed_execution_payload_envelope.signature` is valid with respect
   to the builder's public key.
@@ -295,7 +295,7 @@ The following validations MUST pass before forwarding the
   block in fork choice.
 - _[IGNORE]_ `bid.slot` is the current slot or the next slot.
 - _[REJECT]_ `signed_execution_payload_bid.signature` is valid with respect to
-  the `bid.builder_index`.
+  the `bid.builder_pubkey`.
 
 ##### Blob subnets
 

@@ -6,11 +6,7 @@
 
 - [Introduction](#introduction)
 - [Becoming a builder](#becoming-a-builder)
-  - [Builder withdrawal credentials](#builder-withdrawal-credentials)
-  - [Submit deposit](#submit-deposit)
-  - [Process deposit](#process-deposit)
-  - [Builder index](#builder-index)
-  - [Activation](#activation)
+  - [Builder key pair](#builder-key-pair)
 - [Builder activities](#builder-activities)
   - [Constructing the `SignedExecutionPayloadBid`](#constructing-the-signedexecutionpayloadbid)
   - [Constructing the `DataColumnSidecar`s](#constructing-the-datacolumnsidecars)
@@ -32,60 +28,25 @@ bids. This document is a collection of guidelines for builders.
 
 ## Becoming a builder
 
-### Builder withdrawal credentials
+### Builder key pair
 
-The `withdrawal_credentials` field determines whether a validator is registered
-as a builder on the network. To be recognized as a builder, a validator’s
-`withdrawal_credentials` must use the `BUILDER_WITHDRAWAL_PREFIX`. This prefix
-distinguishes builders from other validator types.
+To become a builder, an entity needs a BLS key pair (public key and private
+key). This key pair is used to sign execution payload bids and envelopes. Unlike
+validators, builders do not need to stake or make deposits. They operate
+off-protocol and can submit bids using their BLS public key for identification.
 
-The `withdrawal_credentials` field must be:
-
-- `withdrawal_credentials[:1] == BUILDER_WITHDRAWAL_PREFIX` (`0x03`)
-- `withdrawal_credentials[1:12] == b'\x00' * 11`
-- `withdrawal_credentials[12:] == builder_execution_address`
-
-Where `builder_execution_address` is an execution layer address that will
-receive withdrawals.
-
-### Submit deposit
-
-Builders follow the same deposit process as regular validators, but with the
-builder-specific withdrawal credentials. The deposit must include:
-
-- `pubkey`: The builder's BLS public key.
-- `withdrawal_credentials`: With the `BUILDER_WITHDRAWAL_PREFIX` (`0x03`)
-  prefix.
-- `amount`: At least `MIN_DEPOSIT_AMOUNT` gwei.
-- `signature`: BLS signature over the deposit data.
-
-### Process deposit
-
-The beacon chain processes builder deposits identically to validator deposits,
-with the withdrawal credentials using `BUILDER_WITHDRAWAL_PREFIX`.
-
-### Builder index
-
-Once the deposit is processed, the builder is assigned a unique
-`validator_index` within the validator registry. This index is used to identify
-the builder in execution payload bids and envelopes.
-
-### Activation
-
-Builder activation follows the same process as other validators. Note that the
-validator must have a balance of at least `MIN_ACTIVATION_BALANCE` to become
-eligible for activation.
+The builder's BLS public key (`builder_pubkey`) is included in execution payload
+bids and envelopes to identify the builder and verify signatures.
 
 ## Builder activities
 
 Builders have two optional activities: submitting bids and submitting payloads.
 Builders can submit bids to produce execution payloads. They can broadcast these
 bids in the form of `SignedExecutionPayloadBid` objects. These objects encode a
-commitment to reveal an execution payload in exchange for a payment. When their
-bids are chosen by the corresponding proposer, builders are expected to
-broadcast an accompanying `SignedExecutionPayloadEnvelope` object honoring the
-commitment. If a proposer accepts a builder's bid, the builder will pay the
-proposer what it promised whether it submits the payload or not.
+commitment to reveal an execution payload along with a promised payment value.
+When their bids are chosen by the corresponding proposer, builders are expected
+to broadcast an accompanying `SignedExecutionPayloadEnvelope` object honoring
+the commitment.
 
 ### Constructing the `SignedExecutionPayloadBid`
 
@@ -110,13 +71,12 @@ to include. They produce a `SignedExecutionPayloadBid` as follows.
     be used as a fallback.
 06. Set `bid.gas_limit` to be the gas limit of the constructed payload, that is
     `payload.gas_limit`.
-07. Set `bid.builder_index` to be the validator index of the builder performing
+07. Set `bid.builder_pubkey` to be the BLS public key of the builder performing
     these actions.
 08. Set `bid.slot` to be the slot for which this bid is aimed. This slot
     **MUST** be either the current slot or the next slot.
 09. Set `bid.value` to be the value (in gwei) that the builder will pay the
-    proposer if the bid is accepted. The builder **MUST** have enough excess
-    balance to fulfill this bid and all pending payments.
+    proposer if the bid is accepted.
 10. Set `bid.kzg_commitments_root` to be the `hash_tree_root` of the
     `blobsbundle.commitments` field returned by `engine_getPayloadV5`.
 
@@ -224,8 +184,8 @@ alias `bid` to be the committed `ExecutionPayloadBid` in
    `envelope.bid.block_hash`.
 2. Set `envelope.execution_requests` to be the `ExecutionRequests` associated
    with `payload`.
-3. Set `envelope.builder_index` to be the validator index of the builder
-   performing these steps. This field **MUST** be `bid.builder_index`.
+3. Set `envelope.builder_pubkey` to be the BLS public key of the builder
+   performing these steps. This field **MUST** be `bid.builder_pubkey`.
 4. Set `envelope.beacon_block_root` to be `hash_tree_root(block)`.
 5. Set `envelope.slot` to be `block.slot`.
 6. Set `envelope.blob_kzg_commitments` to be the `commitments` field of the
