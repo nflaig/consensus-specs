@@ -19,6 +19,7 @@
     - [Constructing the `DataColumnSidecar`s](#constructing-the-datacolumnsidecars)
       - [Modified `get_data_column_sidecars`](#modified-get_data_column_sidecars)
       - [Modified `get_data_column_sidecars_from_block`](#modified-get_data_column_sidecars_from_block)
+    - [Constructing the `SignedExecutionPayloadEnvelope`](#constructing-the-signedexecutionpayloadenvelope)
   - [Payload timeliness attestation](#payload-timeliness-attestation)
     - [Constructing a payload attestation](#constructing-a-payload-attestation)
 - [Modified functions](#modified-functions)
@@ -130,8 +131,6 @@ top of a `state` MUST take the following actions in order to construct the
   - The header slot is for the proposal block slot.
   - The header parent block hash equals the state's `latest_block_hash`.
   - The header parent block root equals the current block's `parent_root`.
-- Select one commitment and set
-  `body.execution_payload_commitment = execution_payload_commitment`.
 
 #### Constructing `payload_attestations`
 
@@ -222,6 +221,52 @@ def get_data_column_sidecars_from_block(
         cells_and_kzg_proofs,
     )
 ```
+
+#### Constructing the `SignedExecutionPayloadEnvelope`
+
+When the proposer publishes a valid `SignedBeaconBlock` containing a payload
+commitment, the broadcasted `SignedExecutionPayloadEnvelope` later is expected
+to fulfill this commitment.
+
+To construct the `ExecutionPayloadEnvelope` the following steps must be
+performed. We alias `block` to be the corresponding `BeaconBlock` and alias
+`payload_commitment` to be the committed `ExecutionPayloadCommitment` in
+`block.body.execution_payload_commitment`.
+
+1. Set `envelope.payload` to be the `ExecutionPayload` constructed when creating
+   the corresponding commitment. This payload **MUST** have the same block hash
+   as `payload_commitment.block_hash`.
+2. Set `envelope.execution_requests` to be the `ExecutionRequests` associated
+   with `payload`.
+3. Set `envelope.pubkey` to be the `payload_commitment.pubkey`.
+4. Set `envelope.beacon_block_root` to be `hash_tree_root(block)`.
+5. Set `envelope.slot` to be `block.slot`.
+6. Set `envelope.blob_kzg_commitments` to be the `commitments` field of the
+   blobs bundle constructed when constructing the bid. This field **MUST** have
+   a `hash_tree_root` equal to `bid.blob_kzg_commitments_root`.
+
+After setting these parameters, assemble
+`signed_execution_payload_envelope = SignedExecutionPayloadEnvelope(message=envelope, signature=BLSSignature())`,
+then verify that the envelope is valid with
+`process_execution_payload(state, signed_execution_payload_envelope, execution_engine, verify=False)`.
+This function should not trigger an exception.
+
+1. Set `envelope.state_root` to `hash_tree_root(state)`.
+
+After preparing the `envelope` the builder should sign the envelope using:
+
+```python
+def get_execution_payload_envelope_signature(
+    state: BeaconState, envelope: ExecutionPayloadEnvelope, privkey: int
+) -> BLSSignature:
+    domain = get_domain(state, DOMAIN_PAYLOAD_COMMITMENT, compute_epoch_at_slot(state.slot))
+    signing_root = compute_signing_root(envelope, domain)
+    return bls.Sign(privkey, signing_root)
+```
+
+Then assemble
+`signed_execution_payload_envelope = SignedExecutionPayloadEnvelope(message=envelope, signature=signature)`
+and broadcasts it on the `execution_payload` global gossip topic.
 
 ### Payload timeliness attestation
 
