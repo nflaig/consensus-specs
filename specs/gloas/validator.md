@@ -242,8 +242,9 @@ performed. We alias `block` to be the corresponding `BeaconBlock` and alias
 4. Set `envelope.beacon_block_root` to be `hash_tree_root(block)`.
 5. Set `envelope.slot` to be `block.slot`.
 6. Set `envelope.blob_kzg_commitments` to be the `commitments` field of the
-   blobs bundle constructed when constructing the bid. This field **MUST** have
-   a `hash_tree_root` equal to `bid.blob_kzg_commitments_root`.
+   blobs bundle constructed when constructing the payload commitment. This field
+   **MUST** have a `hash_tree_root` equal to
+   `payload_commitment.blob_kzg_commitments_root`.
 
 After setting these parameters, assemble
 `signed_execution_payload_envelope = SignedExecutionPayloadEnvelope(message=envelope, signature=BLSSignature())`,
@@ -253,7 +254,7 @@ This function should not trigger an exception.
 
 1. Set `envelope.state_root` to `hash_tree_root(state)`.
 
-After preparing the `envelope` the builder should sign the envelope using:
+After preparing the `envelope` the envelope is signed using:
 
 ```python
 def get_execution_payload_envelope_signature(

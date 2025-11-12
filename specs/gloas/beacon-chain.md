@@ -800,7 +800,7 @@ def process_execution_payload(
 
     # Verify consistency with the payload commitment
     payload_commitment = state.latest_execution_payload_commitment
-    assert envelope.pubkey == commitment.pubkey
+    assert envelope.pubkey == payload_commitment.pubkey
     assert payload_commitment.blob_kzg_commitments_root == hash_tree_root(
         envelope.blob_kzg_commitments
     )

@@ -84,7 +84,7 @@ def compute_fork_version(epoch: Epoch) -> Version:
 have been removed from `DataColumnSidecar` in Gloas as header and inclusion
 proof verifications are no longer required in ePBS. Instead, sidecars are
 validated by checking that the hash of `kzg_commitments` matches what's
-committed in the commitment for the corresponding `beacon_block_root`.
+committed in the payload commitment for the corresponding `beacon_block_root`.
 
 ```python
 class DataColumnSidecar(Container):
@@ -201,16 +201,15 @@ regards to the `ExecutionPayload` are removed:
     validation (including execution node verification of the
     `block.body.execution_payload`).
 
-And instead the following validations are set in place with the alias
-`payload_commitment = execution_payload_commitment.message`:
+And instead the following validations are set in place:
 
 - If `execution_payload` verification of block's execution payload parent by an
   execution node **is complete**:
   - [REJECT] The block's execution payload parent (defined by
-    `payload_commitment.parent_block_hash`) passes all validation.
+    `execution_payload_commitment.parent_block_hash`) passes all validation.
 - [REJECT] The payload commitment's parent (defined by
-  `payload_commitment.parent_block_root`) equals the block's parent (defined by
-  `block.parent_root`).
+  `execution_payload_commitment.parent_block_root`) equals the block's parent
+  (defined by `block.parent_root`).
 
 ###### `execution_payload`
 
@@ -232,9 +231,8 @@ The following validations MUST pass before forwarding the
   `envelope.slot >= compute_start_slot_at_epoch(store.finalized_checkpoint.epoch)`
 
 Let `block` be the block with `envelope.beacon_block_root`. Let
-`payload_commitment` alias `block.body.execution_payload_commitment.message`
-(notice that this can be obtained from the
-`state.latest_execution_payload_commitment`)
+`payload_commitment` alias `block.body.execution_payload_commitment` (notice
+that this can be obtained from the `state.latest_execution_payload_commitment`)
 
 - _[REJECT]_ `block` passes validation.
 - _[REJECT]_ `block.slot` equals `envelope.slot`.
