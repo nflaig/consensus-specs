@@ -4,25 +4,27 @@
 
 <!-- mdformat-toc start --slug=github --no-anchors --maxlevel=6 --minlevel=2 -->
 
-- [Gloas -- Honest Validator](#gloas----honest-validator)
-  - [Introduction](#introduction)
-  - [Configuration](#configuration)
-    - [Time parameters](#time-parameters)
-  - [Validator assignment](#validator-assignment)
-    - [Payload timeliness committee](#payload-timeliness-committee)
-    - [Lookahead](#lookahead)
-  - [Beacon chain responsibilities](#beacon-chain-responsibilities)
-    - [Attestation](#attestation)
-    - [Sync Committee participations](#sync-committee-participations)
-    - [Block proposal](#block-proposal)
-      - [Constructing `execution_payload_commitment`](#constructing-execution_payload_commitment)
-      - [Constructing `payload_attestations`](#constructing-payload_attestations)
-    - [Payload timeliness attestation](#payload-timeliness-attestation)
-      - [Constructing a payload attestation](#constructing-a-payload-attestation)
-  - [Modified functions](#modified-functions)
-    - [Modified `prepare_execution_payload`](#modified-prepare_execution_payload)
-  - [Data column sidecars](#data-column-sidecars)
-    - [Modified `get_data_column_sidecars_from_column_sidecar`](#modified-get_data_column_sidecars_from_column_sidecar)
+- [Introduction](#introduction)
+- [Configuration](#configuration)
+  - [Time parameters](#time-parameters)
+- [Validator assignment](#validator-assignment)
+  - [Payload timeliness committee](#payload-timeliness-committee)
+  - [Lookahead](#lookahead)
+- [Beacon chain responsibilities](#beacon-chain-responsibilities)
+  - [Attestation](#attestation)
+  - [Sync Committee participations](#sync-committee-participations)
+  - [Block proposal](#block-proposal)
+    - [Constructing `execution_payload_commitment`](#constructing-execution_payload_commitment)
+    - [Constructing `payload_attestations`](#constructing-payload_attestations)
+    - [Constructing the `DataColumnSidecar`s](#constructing-the-datacolumnsidecars)
+      - [Modified `get_data_column_sidecars`](#modified-get_data_column_sidecars)
+      - [Modified `get_data_column_sidecars_from_block`](#modified-get_data_column_sidecars_from_block)
+  - [Payload timeliness attestation](#payload-timeliness-attestation)
+    - [Constructing a payload attestation](#constructing-a-payload-attestation)
+- [Modified functions](#modified-functions)
+  - [Modified `prepare_execution_payload`](#modified-prepare_execution_payload)
+- [Data column sidecars](#data-column-sidecars)
+  - [Modified `get_data_column_sidecars_from_column_sidecar`](#modified-get_data_column_sidecars_from_column_sidecar)
 
 <!-- mdformat-toc end -->
 
@@ -148,6 +150,78 @@ construct the `payload_attestations` field in `BeaconBlockBody`:
   `aggregation_bits` field by using the relative position of the validator
   indices with respect to the PTC that is obtained from
   `get_ptc(state, block_slot - 1)`.
+
+#### Constructing the `DataColumnSidecar`s
+
+##### Modified `get_data_column_sidecars`
+
+```python
+def get_data_column_sidecars(
+    # [Modified in Gloas:EIP7732]
+    # Removed `signed_block_header`
+    # [New in Gloas:EIP7732]
+    beacon_block_root: Root,
+    # [New in Gloas:EIP7732]
+    slot: Slot,
+    kzg_commitments: List[KZGCommitment, MAX_BLOB_COMMITMENTS_PER_BLOCK],
+    # [Modified in Gloas:EIP7732]
+    # Removed `kzg_commitments_inclusion_proof`
+    cells_and_kzg_proofs: Sequence[
+        Tuple[Vector[Cell, CELLS_PER_EXT_BLOB], Vector[KZGProof, CELLS_PER_EXT_BLOB]]
+    ],
+) -> Sequence[DataColumnSidecar]:
+    """
+    Given a beacon block root and the commitments, cells/proofs associated with
+    each blob in the block, assemble the sidecars which can be distributed to peers.
+    """
+    assert len(cells_and_kzg_proofs) == len(kzg_commitments)
+
+    sidecars = []
+    for column_index in range(NUMBER_OF_COLUMNS):
+        column_cells, column_proofs = [], []
+        for cells, proofs in cells_and_kzg_proofs:
+            column_cells.append(cells[column_index])
+            column_proofs.append(proofs[column_index])
+        sidecars.append(
+            DataColumnSidecar(
+                index=column_index,
+                column=column_cells,
+                kzg_commitments=kzg_commitments,
+                kzg_proofs=column_proofs,
+                slot=slot,
+                beacon_block_root=beacon_block_root,
+            )
+        )
+    return sidecars
+```
+
+##### Modified `get_data_column_sidecars_from_block`
+
+*Note*: The function `get_data_column_sidecars_from_block` is modified to
+include the list of blob KZG commitments and to use `beacon_block_root` instead
+of header and inclusion proof computations.
+
+```python
+def get_data_column_sidecars_from_block(
+    signed_block: SignedBeaconBlock,
+    # [New in Gloas:EIP7732]
+    blob_kzg_commitments: List[KZGCommitment, MAX_BLOB_COMMITMENTS_PER_BLOCK],
+    cells_and_kzg_proofs: Sequence[
+        Tuple[Vector[Cell, CELLS_PER_EXT_BLOB], Vector[KZGProof, CELLS_PER_EXT_BLOB]]
+    ],
+) -> Sequence[DataColumnSidecar]:
+    """
+    Given a signed block and the cells/proofs associated with each blob in the
+    block, assemble the sidecars which can be distributed to peers.
+    """
+    beacon_block_root = hash_tree_root(signed_block.message)
+    return get_data_column_sidecars(
+        beacon_block_root,
+        signed_block.message.slot,
+        blob_kzg_commitments,
+        cells_and_kzg_proofs,
+    )
+```
 
 ### Payload timeliness attestation
 
