@@ -7,22 +7,16 @@
 - [Introduction](#introduction)
 - [Constants](#constants)
   - [Domain types](#domain-types)
-  - [Misc](#misc)
-  - [Withdrawal prefixes](#withdrawal-prefixes)
 - [Preset](#preset)
-  - [Misc](#misc-1)
+  - [Misc](#misc)
   - [Max operations per block](#max-operations-per-block)
-  - [State list lengths](#state-list-lengths)
 - [Containers](#containers)
   - [New containers](#new-containers)
-    - [`BuilderPendingPayment`](#builderpendingpayment)
-    - [`BuilderPendingWithdrawal`](#builderpendingwithdrawal)
     - [`PayloadAttestationData`](#payloadattestationdata)
     - [`PayloadAttestation`](#payloadattestation)
     - [`PayloadAttestationMessage`](#payloadattestationmessage)
     - [`IndexedPayloadAttestation`](#indexedpayloadattestation)
-    - [`ExecutionPayloadBid`](#executionpayloadbid)
-    - [`SignedExecutionPayloadBid`](#signedexecutionpayloadbid)
+    - [`ExecutionPayloadCommitment`](#executionpayloadcommitment)
     - [`ExecutionPayloadEnvelope`](#executionpayloadenvelope)
     - [`SignedExecutionPayloadEnvelope`](#signedexecutionpayloadenvelope)
   - [Modified containers](#modified-containers)
@@ -30,14 +24,10 @@
     - [`BeaconState`](#beaconstate)
 - [Helper functions](#helper-functions)
   - [Predicates](#predicates)
-    - [New `is_builder_withdrawal_credential`](#new-is_builder_withdrawal_credential)
-    - [New `has_builder_withdrawal_credential`](#new-has_builder_withdrawal_credential)
-    - [Modified `has_compounding_withdrawal_credential`](#modified-has_compounding_withdrawal_credential)
     - [New `is_attestation_same_slot`](#new-is_attestation_same_slot)
     - [New `is_valid_indexed_payload_attestation`](#new-is_valid_indexed_payload_attestation)
     - [New `is_parent_block_full`](#new-is_parent_block_full)
-  - [Misc](#misc-2)
-    - [Modified `get_pending_balance_to_withdraw`](#modified-get_pending_balance_to_withdraw)
+  - [Misc](#misc-1)
     - [New `compute_balance_weighted_selection`](#new-compute_balance_weighted_selection)
     - [New `compute_balance_weighted_acceptance`](#new-compute_balance_weighted_acceptance)
     - [Modified `compute_proposer_indices`](#modified-compute_proposer_indices)
@@ -46,20 +36,13 @@
     - [Modified `get_attestation_participation_flag_indices`](#modified-get_attestation_participation_flag_indices)
     - [New `get_ptc`](#new-get_ptc)
     - [New `get_indexed_payload_attestation`](#new-get_indexed_payload_attestation)
-    - [New `get_builder_payment_quorum_threshold`](#new-get_builder_payment_quorum_threshold)
 - [Beacon chain state transition function](#beacon-chain-state-transition-function)
   - [Modified `process_slot`](#modified-process_slot)
-  - [Epoch processing](#epoch-processing)
-    - [Modified `process_epoch`](#modified-process_epoch)
-    - [New `process_builder_pending_payments`](#new-process_builder_pending_payments)
   - [Block processing](#block-processing)
     - [Withdrawals](#withdrawals)
-      - [New `is_builder_payment_withdrawable`](#new-is_builder_payment_withdrawable)
-      - [Modified `get_expected_withdrawals`](#modified-get_expected_withdrawals)
       - [Modified `process_withdrawals`](#modified-process_withdrawals)
-    - [Execution payload bid](#execution-payload-bid)
-      - [New `verify_execution_payload_bid_signature`](#new-verify_execution_payload_bid_signature)
-      - [New `process_execution_payload_bid`](#new-process_execution_payload_bid)
+    - [Execution payload commitment](#execution-payload-commitment)
+      - [New `process_execution_payload_commitment`](#new-process_execution_payload_commitment)
     - [Operations](#operations)
       - [Modified `process_operations`](#modified-process_operations)
       - [Attestations](#attestations)
@@ -67,7 +50,6 @@
       - [Payload Attestations](#payload-attestations)
         - [New `process_payload_attestation`](#new-process_payload_attestation)
       - [Proposer Slashing](#proposer-slashing)
-        - [Modified `process_proposer_slashing`](#modified-process_proposer_slashing)
   - [Execution payload processing](#execution-payload-processing)
     - [New `verify_execution_payload_envelope_signature`](#new-verify_execution_payload_envelope_signature)
     - [New `process_execution_payload`](#new-process_execution_payload)
@@ -87,23 +69,10 @@ Gloas is a consensus-layer upgrade containing a number of features. Including:
 
 ### Domain types
 
-| Name                    | Value                      |
-| ----------------------- | -------------------------- |
-| `DOMAIN_BEACON_BUILDER` | `DomainType('0x1B000000')` |
-| `DOMAIN_PTC_ATTESTER`   | `DomainType('0x0C000000')` |
-
-### Misc
-
-| Name                                    | Value        |
-| --------------------------------------- | ------------ |
-| `BUILDER_PAYMENT_THRESHOLD_NUMERATOR`   | `uint64(6)`  |
-| `BUILDER_PAYMENT_THRESHOLD_DENOMINATOR` | `uint64(10)` |
-
-### Withdrawal prefixes
-
-| Name                        | Value            | Description                                |
-| --------------------------- | ---------------- | ------------------------------------------ |
-| `BUILDER_WITHDRAWAL_PREFIX` | `Bytes1('0x03')` | Withdrawal credential prefix for a builder |
+| Name                        | Value                      |
+| --------------------------- | -------------------------- |
+| `DOMAIN_PAYLOAD_COMMITMENT` | `DomainType('0x1B000000')` |
+| `DOMAIN_PTC_ATTESTER`       | `DomainType('0x0C000000')` |
 
 ## Preset
 
@@ -119,33 +88,9 @@ Gloas is a consensus-layer upgrade containing a number of features. Including:
 | -------------------------- | ----- |
 | `MAX_PAYLOAD_ATTESTATIONS` | `4`   |
 
-### State list lengths
-
-| Name                                | Value                         | Unit                        |
-| ----------------------------------- | ----------------------------- | --------------------------- |
-| `BUILDER_PENDING_WITHDRAWALS_LIMIT` | `uint64(2**20)` (= 1,048,576) | Builder pending withdrawals |
-
 ## Containers
 
 ### New containers
-
-#### `BuilderPendingPayment`
-
-```python
-class BuilderPendingPayment(Container):
-    weight: Gwei
-    withdrawal: BuilderPendingWithdrawal
-```
-
-#### `BuilderPendingWithdrawal`
-
-```python
-class BuilderPendingWithdrawal(Container):
-    fee_recipient: ExecutionAddress
-    amount: Gwei
-    builder_index: ValidatorIndex
-    withdrawable_epoch: Epoch
-```
 
 #### `PayloadAttestationData`
 
@@ -184,28 +129,17 @@ class IndexedPayloadAttestation(Container):
     signature: BLSSignature
 ```
 
-#### `ExecutionPayloadBid`
+#### `ExecutionPayloadCommitment`
 
 ```python
-class ExecutionPayloadBid(Container):
+class ExecutionPayloadCommitment(Container):
     parent_block_hash: Hash32
     parent_block_root: Root
     block_hash: Hash32
-    fee_recipient: ExecutionAddress
     gas_limit: uint64
-    builder_index: ValidatorIndex
+    pubkey: BLSPubkey
     slot: Slot
-    value: Gwei
-    execution_payment: Gwei
     blob_kzg_commitments_root: Root
-```
-
-#### `SignedExecutionPayloadBid`
-
-```python
-class SignedExecutionPayloadBid(Container):
-    message: ExecutionPayloadBid
-    signature: BLSSignature
 ```
 
 #### `ExecutionPayloadEnvelope`
@@ -214,7 +148,7 @@ class SignedExecutionPayloadBid(Container):
 class ExecutionPayloadEnvelope(Container):
     payload: ExecutionPayload
     execution_requests: ExecutionRequests
-    builder_index: ValidatorIndex
+    pubkey: BLSPubkey
     beacon_block_root: Root
     slot: Slot
     blob_kzg_commitments: List[KZGCommitment, MAX_BLOB_COMMITMENTS_PER_BLOCK]
@@ -255,7 +189,7 @@ class BeaconBlockBody(Container):
     # [Modified in Gloas:EIP7732]
     # Removed `execution_requests`
     # [New in Gloas:EIP7732]
-    signed_execution_payload_bid: SignedExecutionPayloadBid
+    execution_payload_commitment: ExecutionPayloadCommitment
     # [New in Gloas:EIP7732]
     payload_attestations: List[PayloadAttestation, MAX_PAYLOAD_ATTESTATIONS]
 ```
@@ -291,7 +225,7 @@ class BeaconState(Container):
     # [Modified in Gloas:EIP7732]
     # Removed `latest_execution_payload_header`
     # [New in Gloas:EIP7732]
-    latest_execution_payload_bid: ExecutionPayloadBid
+    latest_execution_payload_commitment: ExecutionPayloadCommitment
     next_withdrawal_index: WithdrawalIndex
     next_withdrawal_validator_index: ValidatorIndex
     historical_summaries: List[HistoricalSummary, HISTORICAL_ROOTS_LIMIT]
@@ -308,10 +242,6 @@ class BeaconState(Container):
     # [New in Gloas:EIP7732]
     execution_payload_availability: Bitvector[SLOTS_PER_HISTORICAL_ROOT]
     # [New in Gloas:EIP7732]
-    builder_pending_payments: Vector[BuilderPendingPayment, 2 * SLOTS_PER_EPOCH]
-    # [New in Gloas:EIP7732]
-    builder_pending_withdrawals: List[BuilderPendingWithdrawal, BUILDER_PENDING_WITHDRAWALS_LIMIT]
-    # [New in Gloas:EIP7732]
     latest_block_hash: Hash32
     # [New in Gloas:EIP7732]
     latest_withdrawals_root: Root
@@ -320,40 +250,6 @@ class BeaconState(Container):
 ## Helper functions
 
 ### Predicates
-
-#### New `is_builder_withdrawal_credential`
-
-```python
-def is_builder_withdrawal_credential(withdrawal_credentials: Bytes32) -> bool:
-    return withdrawal_credentials[:1] == BUILDER_WITHDRAWAL_PREFIX
-```
-
-#### New `has_builder_withdrawal_credential`
-
-```python
-def has_builder_withdrawal_credential(validator: Validator) -> bool:
-    """
-    Check if ``validator`` has an 0x03 prefixed "builder" withdrawal credential.
-    """
-    return is_builder_withdrawal_credential(validator.withdrawal_credentials)
-```
-
-#### Modified `has_compounding_withdrawal_credential`
-
-*Note*: The function `has_compounding_withdrawal_credential` is modified to
-return true for builders.
-
-```python
-def has_compounding_withdrawal_credential(validator: Validator) -> bool:
-    """
-    Check if ``validator`` has an 0x02 or 0x03 prefixed withdrawal credential.
-    """
-    if is_compounding_withdrawal_credential(validator.withdrawal_credentials):
-        return True
-    if is_builder_withdrawal_credential(validator.withdrawal_credentials):
-        return True
-    return False
-```
 
 #### New `is_attestation_same_slot`
 
@@ -396,45 +292,17 @@ def is_valid_indexed_payload_attestation(
 
 #### New `is_parent_block_full`
 
-*Note*: This function returns true if the last committed payload bid was
-fulfilled with a payload, which can only happen when both beacon block and
-payload were present. This function must be called on a beacon state before
-processing the execution payload bid in the block.
+*Note*: This function returns true if the last payload commitment was fulfilled
+with a payload, which can only happen when both beacon block and payload were
+present. This function must be called on a beacon state before processing the
+execution payload commitment in the block.
 
 ```python
 def is_parent_block_full(state: BeaconState) -> bool:
-    return state.latest_execution_payload_bid.block_hash == state.latest_block_hash
+    return state.latest_execution_payload_commitment.block_hash == state.latest_block_hash
 ```
 
 ### Misc
-
-#### Modified `get_pending_balance_to_withdraw`
-
-*Note*: `get_pending_balance_to_withdraw` is modified to account for pending
-builder payments.
-
-```python
-def get_pending_balance_to_withdraw(state: BeaconState, validator_index: ValidatorIndex) -> Gwei:
-    return (
-        sum(
-            withdrawal.amount
-            for withdrawal in state.pending_partial_withdrawals
-            if withdrawal.validator_index == validator_index
-        )
-        # [New in Gloas:EIP7732]
-        + sum(
-            withdrawal.amount
-            for withdrawal in state.builder_pending_withdrawals
-            if withdrawal.builder_index == validator_index
-        )
-        # [New in Gloas:EIP7732]
-        + sum(
-            payment.withdrawal.amount
-            for payment in state.builder_pending_payments
-            if payment.withdrawal.builder_index == validator_index
-        )
-    )
-```
 
 #### New `compute_balance_weighted_selection`
 
@@ -620,18 +488,6 @@ def get_indexed_payload_attestation(
     )
 ```
 
-#### New `get_builder_payment_quorum_threshold`
-
-```python
-def get_builder_payment_quorum_threshold(state: BeaconState) -> uint64:
-    """
-    Calculate the quorum threshold for builder payments.
-    """
-    per_slot_balance = get_total_active_balance(state) // SLOTS_PER_EPOCH
-    quorum = per_slot_balance * BUILDER_PAYMENT_THRESHOLD_NUMERATOR
-    return uint64(quorum // BUILDER_PAYMENT_THRESHOLD_DENOMINATOR)
-```
-
 ## Beacon chain state transition function
 
 State transition is fundamentally modified in Gloas. The full state transition
@@ -669,52 +525,6 @@ def process_slot(state: BeaconState) -> None:
     state.execution_payload_availability[(state.slot + 1) % SLOTS_PER_HISTORICAL_ROOT] = 0b0
 ```
 
-### Epoch processing
-
-#### Modified `process_epoch`
-
-```python
-def process_epoch(state: BeaconState) -> None:
-    process_justification_and_finalization(state)
-    process_inactivity_updates(state)
-    process_rewards_and_penalties(state)
-    process_registry_updates(state)
-    process_slashings(state)
-    process_eth1_data_reset(state)
-    process_pending_deposits(state)
-    process_pending_consolidations(state)
-    process_effective_balance_updates(state)
-    process_slashings_reset(state)
-    process_randao_mixes_reset(state)
-    process_historical_summaries_update(state)
-    process_participation_flag_updates(state)
-    process_sync_committee_updates(state)
-    process_proposer_lookahead(state)
-    # [New in Gloas:EIP7732]
-    process_builder_pending_payments(state)
-```
-
-#### New `process_builder_pending_payments`
-
-```python
-def process_builder_pending_payments(state: BeaconState) -> None:
-    """
-    Processes the builder pending payments from the previous epoch.
-    """
-    quorum = get_builder_payment_quorum_threshold(state)
-    for payment in state.builder_pending_payments[:SLOTS_PER_EPOCH]:
-        if payment.weight > quorum:
-            amount = payment.withdrawal.amount
-            exit_queue_epoch = compute_exit_epoch_and_update_churn(state, amount)
-            withdrawable_epoch = exit_queue_epoch + MIN_VALIDATOR_WITHDRAWABILITY_DELAY
-            payment.withdrawal.withdrawable_epoch = Epoch(withdrawable_epoch)
-            state.builder_pending_withdrawals.append(payment.withdrawal)
-
-    old_payments = state.builder_pending_payments[SLOTS_PER_EPOCH:]
-    new_payments = [BuilderPendingPayment() for _ in range(SLOTS_PER_EPOCH)]
-    state.builder_pending_payments = old_payments + new_payments
-```
-
 ### Block processing
 
 ```python
@@ -725,7 +535,7 @@ def process_block(state: BeaconState, block: BeaconBlock) -> None:
     # [Modified in Gloas:EIP7732]
     # Removed `process_execution_payload`
     # [New in Gloas:EIP7732]
-    process_execution_payload_bid(state, block)
+    process_execution_payload_commitment(state, block)
     process_randao(state, block.body)
     process_eth1_data(state, block.body)
     # [Modified in Gloas:EIP7732]
@@ -735,141 +545,13 @@ def process_block(state: BeaconState, block: BeaconBlock) -> None:
 
 #### Withdrawals
 
-##### New `is_builder_payment_withdrawable`
-
-```python
-def is_builder_payment_withdrawable(
-    state: BeaconState, withdrawal: BuilderPendingWithdrawal
-) -> bool:
-    """
-    Check if the builder is slashed and not yet withdrawable.
-    """
-    builder = state.validators[withdrawal.builder_index]
-    current_epoch = compute_epoch_at_slot(state.slot)
-    return builder.withdrawable_epoch >= current_epoch or not builder.slashed
-```
-
-##### Modified `get_expected_withdrawals`
-
-```python
-def get_expected_withdrawals(state: BeaconState) -> Tuple[Sequence[Withdrawal], uint64, uint64]:
-    epoch = get_current_epoch(state)
-    withdrawal_index = state.next_withdrawal_index
-    validator_index = state.next_withdrawal_validator_index
-    withdrawals: List[Withdrawal] = []
-    processed_partial_withdrawals_count = 0
-    processed_builder_withdrawals_count = 0
-
-    # [New in Gloas:EIP7732]
-    # Sweep for builder payments
-    for withdrawal in state.builder_pending_withdrawals:
-        if (
-            withdrawal.withdrawable_epoch > epoch
-            or len(withdrawals) + 1 == MAX_WITHDRAWALS_PER_PAYLOAD
-        ):
-            break
-        if is_builder_payment_withdrawable(state, withdrawal):
-            total_withdrawn = sum(
-                w.amount for w in withdrawals if w.validator_index == withdrawal.builder_index
-            )
-            balance = state.balances[withdrawal.builder_index] - total_withdrawn
-            builder = state.validators[withdrawal.builder_index]
-            if builder.slashed:
-                withdrawable_balance = min(balance, withdrawal.amount)
-            elif balance > MIN_ACTIVATION_BALANCE:
-                withdrawable_balance = min(balance - MIN_ACTIVATION_BALANCE, withdrawal.amount)
-            else:
-                withdrawable_balance = 0
-
-            if withdrawable_balance > 0:
-                withdrawals.append(
-                    Withdrawal(
-                        index=withdrawal_index,
-                        validator_index=withdrawal.builder_index,
-                        address=withdrawal.fee_recipient,
-                        amount=withdrawable_balance,
-                    )
-                )
-                withdrawal_index += WithdrawalIndex(1)
-        processed_builder_withdrawals_count += 1
-
-    # Sweep for pending partial withdrawals
-    bound = min(
-        len(withdrawals) + MAX_PENDING_PARTIALS_PER_WITHDRAWALS_SWEEP,
-        MAX_WITHDRAWALS_PER_PAYLOAD - 1,
-    )
-    for withdrawal in state.pending_partial_withdrawals:
-        if withdrawal.withdrawable_epoch > epoch or len(withdrawals) == bound:
-            break
-
-        validator = state.validators[withdrawal.validator_index]
-        has_sufficient_effective_balance = validator.effective_balance >= MIN_ACTIVATION_BALANCE
-        total_withdrawn = sum(
-            w.amount for w in withdrawals if w.validator_index == withdrawal.validator_index
-        )
-        balance = state.balances[withdrawal.validator_index] - total_withdrawn
-        has_excess_balance = balance > MIN_ACTIVATION_BALANCE
-        if (
-            validator.exit_epoch == FAR_FUTURE_EPOCH
-            and has_sufficient_effective_balance
-            and has_excess_balance
-        ):
-            withdrawable_balance = min(balance - MIN_ACTIVATION_BALANCE, withdrawal.amount)
-            withdrawals.append(
-                Withdrawal(
-                    index=withdrawal_index,
-                    validator_index=withdrawal.validator_index,
-                    address=ExecutionAddress(validator.withdrawal_credentials[12:]),
-                    amount=withdrawable_balance,
-                )
-            )
-            withdrawal_index += WithdrawalIndex(1)
-
-        processed_partial_withdrawals_count += 1
-
-    # Sweep for remaining.
-    bound = min(len(state.validators), MAX_VALIDATORS_PER_WITHDRAWALS_SWEEP)
-    for _ in range(bound):
-        validator = state.validators[validator_index]
-        total_withdrawn = sum(w.amount for w in withdrawals if w.validator_index == validator_index)
-        balance = state.balances[validator_index] - total_withdrawn
-        if is_fully_withdrawable_validator(validator, balance, epoch):
-            withdrawals.append(
-                Withdrawal(
-                    index=withdrawal_index,
-                    validator_index=validator_index,
-                    address=ExecutionAddress(validator.withdrawal_credentials[12:]),
-                    amount=balance,
-                )
-            )
-            withdrawal_index += WithdrawalIndex(1)
-        elif is_partially_withdrawable_validator(validator, balance):
-            withdrawals.append(
-                Withdrawal(
-                    index=withdrawal_index,
-                    validator_index=validator_index,
-                    address=ExecutionAddress(validator.withdrawal_credentials[12:]),
-                    amount=balance - get_max_effective_balance(validator),
-                )
-            )
-            withdrawal_index += WithdrawalIndex(1)
-        if len(withdrawals) == MAX_WITHDRAWALS_PER_PAYLOAD:
-            break
-        validator_index = ValidatorIndex((validator_index + 1) % len(state.validators))
-    return (
-        withdrawals,
-        processed_builder_withdrawals_count,
-        processed_partial_withdrawals_count,
-    )
-```
-
 ##### Modified `process_withdrawals`
 
 *Note*: This is modified to only take the `state` as parameter. Withdrawals are
 deterministic given the beacon state, any execution payload that has the
 corresponding block as parent beacon block is required to honor these
 withdrawals in the execution layer. `process_withdrawals` must be called before
-`process_execution_payload_bid` as the latter function affects validator
+`process_execution_payload_commitment` as the latter function affects validator
 balances.
 
 ```python
@@ -883,23 +565,11 @@ def process_withdrawals(
     if not is_parent_block_full(state):
         return
 
-    # [Modified in Gloas:EIP7732]
-    # Get information about the expected withdrawals
-    withdrawals, processed_builder_withdrawals_count, processed_partial_withdrawals_count = (
-        get_expected_withdrawals(state)
-    )
+    withdrawals, processed_partial_withdrawals_count = get_expected_withdrawals(state)
     withdrawals_list = List[Withdrawal, MAX_WITHDRAWALS_PER_PAYLOAD](withdrawals)
     state.latest_withdrawals_root = hash_tree_root(withdrawals_list)
     for withdrawal in withdrawals:
         decrease_balance(state, withdrawal.validator_index, withdrawal.amount)
-
-    # [New in Gloas:EIP7732]
-    # Update the pending builder withdrawals
-    state.builder_pending_withdrawals = [
-        w
-        for w in state.builder_pending_withdrawals[:processed_builder_withdrawals_count]
-        if not is_builder_payment_withdrawable(state, w)
-    ] + state.builder_pending_withdrawals[processed_builder_withdrawals_count:]
 
     # Update pending partial withdrawals
     state.pending_partial_withdrawals = state.pending_partial_withdrawals[
@@ -925,83 +595,22 @@ def process_withdrawals(
         state.next_withdrawal_validator_index = next_validator_index
 ```
 
-#### Execution payload bid
+#### Execution payload commitment
 
-##### New `verify_execution_payload_bid_signature`
-
-```python
-def verify_execution_payload_bid_signature(
-    state: BeaconState, signed_bid: SignedExecutionPayloadBid
-) -> bool:
-    builder = state.validators[signed_bid.message.builder_index]
-    signing_root = compute_signing_root(
-        signed_bid.message, get_domain(state, DOMAIN_BEACON_BUILDER)
-    )
-    return bls.Verify(builder.pubkey, signing_root, signed_bid.signature)
-```
-
-##### New `process_execution_payload_bid`
+##### New `process_execution_payload_commitment`
 
 ```python
-def process_execution_payload_bid(state: BeaconState, block: BeaconBlock) -> None:
-    signed_bid = block.body.signed_execution_payload_bid
-    bid = signed_bid.message
-    builder_index = bid.builder_index
-    builder = state.validators[builder_index]
+def process_execution_payload_commitment(state: BeaconState, block: BeaconBlock) -> None:
+    payload_commitment = block.body.execution_payload_commitment
 
-    amount = bid.value
-    # For self-builds, amount must be zero regardless of withdrawal credential prefix
-    if builder_index == block.proposer_index:
-        assert amount == 0
-        assert signed_bid.signature == bls.G2_POINT_AT_INFINITY
-    else:
-        # Non-self builds require builder withdrawal credential
-        assert has_builder_withdrawal_credential(builder)
-        assert verify_execution_payload_bid_signature(state, signed_bid)
+    # Verify that the commitment is for the current slot
+    assert payload_commitment.slot == block.slot
+    # Verify that the commitment is for the right parent block
+    assert payload_commitment.parent_block_hash == state.latest_block_hash
+    assert payload_commitment.parent_block_root == block.parent_root
 
-    assert is_active_validator(builder, get_current_epoch(state))
-    assert not builder.slashed
-
-    # Check that the builder is active, non-slashed, and has funds to cover the bid
-    pending_payments = sum(
-        payment.withdrawal.amount
-        for payment in state.builder_pending_payments
-        if payment.withdrawal.builder_index == builder_index
-    )
-    pending_withdrawals = sum(
-        withdrawal.amount
-        for withdrawal in state.builder_pending_withdrawals
-        if withdrawal.builder_index == builder_index
-    )
-    assert (
-        amount == 0
-        or state.balances[builder_index]
-        >= amount + pending_payments + pending_withdrawals + MIN_ACTIVATION_BALANCE
-    )
-
-    # Verify that the bid is for the current slot
-    assert bid.slot == block.slot
-    # Verify that the bid is for the right parent block
-    assert bid.parent_block_hash == state.latest_block_hash
-    assert bid.parent_block_root == block.parent_root
-
-    # Record the pending payment if there is some payment
-    if amount > 0:
-        pending_payment = BuilderPendingPayment(
-            weight=0,
-            withdrawal=BuilderPendingWithdrawal(
-                fee_recipient=bid.fee_recipient,
-                amount=amount,
-                builder_index=builder_index,
-                withdrawable_epoch=FAR_FUTURE_EPOCH,
-            ),
-        )
-        state.builder_pending_payments[SLOTS_PER_EPOCH + bid.slot % SLOTS_PER_EPOCH] = (
-            pending_payment
-        )
-
-    # Cache the signed execution payload bid
-    state.latest_execution_payload_bid = bid
+    # Cache the signed execution payload commitment
+    state.latest_execution_payload_commitment = payload_commitment
 ```
 
 #### Operations
@@ -1051,9 +660,8 @@ def process_operations(state: BeaconState, body: BeaconBlockBody) -> None:
 
 ###### Modified `process_attestation`
 
-*Note*: The function is modified to track the weight for pending builder
-payments and to use the `index` field in the `AttestationData` to signal the
-payload availability.
+*Note*: The function is modified to use the `index` field in the
+`AttestationData` to signal the payload availability.
 
 ```python
 def process_attestation(state: BeaconState, attestation: Attestation) -> None:
@@ -1092,11 +700,9 @@ def process_attestation(state: BeaconState, attestation: Attestation) -> None:
     if data.target.epoch == get_current_epoch(state):
         current_epoch_target = True
         epoch_participation = state.current_epoch_participation
-        payment = state.builder_pending_payments[SLOTS_PER_EPOCH + data.slot % SLOTS_PER_EPOCH]
     else:
         current_epoch_target = False
         epoch_participation = state.previous_epoch_participation
-        payment = state.builder_pending_payments[data.slot % SLOTS_PER_EPOCH]
 
     proposer_reward_numerator = 0
     for index in get_attesting_indices(state, attestation):
@@ -1114,29 +720,12 @@ def process_attestation(state: BeaconState, attestation: Attestation) -> None:
                 # [New in Gloas:EIP7732]
                 will_set_new_flag = True
 
-        # [New in Gloas:EIP7732]
-        # Add weight for same-slot attestations when any new flag is set.
-        # This ensures each validator contributes exactly once per slot.
-        if (
-            will_set_new_flag
-            and is_attestation_same_slot(state, data)
-            and payment.withdrawal.amount > 0
-        ):
-            payment.weight += state.validators[index].effective_balance
-
     # Reward proposer
     proposer_reward_denominator = (
         (WEIGHT_DENOMINATOR - PROPOSER_WEIGHT) * WEIGHT_DENOMINATOR // PROPOSER_WEIGHT
     )
     proposer_reward = Gwei(proposer_reward_numerator // proposer_reward_denominator)
     increase_balance(state, get_beacon_proposer_index(state), proposer_reward)
-
-    # [New in Gloas:EIP7732]
-    # Update builder payment weight
-    if current_epoch_target:
-        state.builder_pending_payments[SLOTS_PER_EPOCH + data.slot % SLOTS_PER_EPOCH] = payment
-    else:
-        state.builder_pending_payments[data.slot % SLOTS_PER_EPOCH] = payment
 ```
 
 ##### Payload Attestations
@@ -1162,45 +751,6 @@ def process_payload_attestation(
 
 ##### Proposer Slashing
 
-###### Modified `process_proposer_slashing`
-
-```python
-def process_proposer_slashing(state: BeaconState, proposer_slashing: ProposerSlashing) -> None:
-    header_1 = proposer_slashing.signed_header_1.message
-    header_2 = proposer_slashing.signed_header_2.message
-
-    # Verify header slots match
-    assert header_1.slot == header_2.slot
-    # Verify header proposer indices match
-    assert header_1.proposer_index == header_2.proposer_index
-    # Verify the headers are different
-    assert header_1 != header_2
-    # Verify the proposer is slashable
-    proposer = state.validators[header_1.proposer_index]
-    assert is_slashable_validator(proposer, get_current_epoch(state))
-    # Verify signatures
-    for signed_header in (proposer_slashing.signed_header_1, proposer_slashing.signed_header_2):
-        domain = get_domain(
-            state, DOMAIN_BEACON_PROPOSER, compute_epoch_at_slot(signed_header.message.slot)
-        )
-        signing_root = compute_signing_root(signed_header.message, domain)
-        assert bls.Verify(proposer.pubkey, signing_root, signed_header.signature)
-
-    # [New in Gloas:EIP7732]
-    # Remove the BuilderPendingPayment corresponding to
-    # this proposal if it is still in the 2-epoch window.
-    slot = header_1.slot
-    proposal_epoch = compute_epoch_at_slot(slot)
-    if proposal_epoch == get_current_epoch(state):
-        payment_index = SLOTS_PER_EPOCH + slot % SLOTS_PER_EPOCH
-        state.builder_pending_payments[payment_index] = BuilderPendingPayment()
-    elif proposal_epoch == get_previous_epoch(state):
-        payment_index = slot % SLOTS_PER_EPOCH
-        state.builder_pending_payments[payment_index] = BuilderPendingPayment()
-
-    slash_validator(state, header_1.proposer_index)
-```
-
 ### Execution payload processing
 
 #### New `verify_execution_payload_envelope_signature`
@@ -1209,18 +759,17 @@ def process_proposer_slashing(state: BeaconState, proposer_slashing: ProposerSla
 def verify_execution_payload_envelope_signature(
     state: BeaconState, signed_envelope: SignedExecutionPayloadEnvelope
 ) -> bool:
-    builder = state.validators[signed_envelope.message.builder_index]
     signing_root = compute_signing_root(
-        signed_envelope.message, get_domain(state, DOMAIN_BEACON_BUILDER)
+        signed_envelope.message, get_domain(state, DOMAIN_PAYLOAD_COMMITMENT)
     )
-    return bls.Verify(builder.pubkey, signing_root, signed_envelope.signature)
+    return bls.Verify(signed_envelope.message.pubkey, signing_root, signed_envelope.signature)
 ```
 
 #### New `process_execution_payload`
 
 *Note*: `process_execution_payload` is now an independent check in state
-transition. It is called when importing a signed execution payload proposed by
-the builder of the current slot.
+transition. It is called when importing a signed execution payload proposed for
+the current slot.
 
 ```python
 def process_execution_payload(
@@ -1249,18 +798,20 @@ def process_execution_payload(
     assert envelope.beacon_block_root == hash_tree_root(state.latest_block_header)
     assert envelope.slot == state.slot
 
-    # Verify consistency with the committed bid
-    committed_bid = state.latest_execution_payload_bid
-    assert envelope.builder_index == committed_bid.builder_index
-    assert committed_bid.blob_kzg_commitments_root == hash_tree_root(envelope.blob_kzg_commitments)
+    # Verify consistency with the payload commitment
+    payload_commitment = state.latest_execution_payload_commitment
+    assert envelope.pubkey == payload_commitment.pubkey
+    assert payload_commitment.blob_kzg_commitments_root == hash_tree_root(
+        envelope.blob_kzg_commitments
+    )
 
     # Verify the withdrawals root
     assert hash_tree_root(payload.withdrawals) == state.latest_withdrawals_root
 
     # Verify the gas_limit
-    assert committed_bid.gas_limit == payload.gas_limit
+    assert payload_commitment.gas_limit == payload.gas_limit
     # Verify the block hash
-    assert committed_bid.block_hash == payload.block_hash
+    assert payload_commitment.block_hash == payload.block_hash
     # Verify consistency of the parent hash with respect to the previous execution payload
     assert payload.parent_hash == state.latest_block_hash
     # Verify prev_randao
@@ -1293,19 +844,6 @@ def process_execution_payload(
     for_ops(requests.deposits, process_deposit_request)
     for_ops(requests.withdrawals, process_withdrawal_request)
     for_ops(requests.consolidations, process_consolidation_request)
-
-    # Queue the builder payment
-    payment = state.builder_pending_payments[SLOTS_PER_EPOCH + state.slot % SLOTS_PER_EPOCH]
-    amount = payment.withdrawal.amount
-    if amount > 0:
-        exit_queue_epoch = compute_exit_epoch_and_update_churn(state, amount)
-        payment.withdrawal.withdrawable_epoch = Epoch(
-            exit_queue_epoch + MIN_VALIDATOR_WITHDRAWABILITY_DELAY
-        )
-        state.builder_pending_withdrawals.append(payment.withdrawal)
-    state.builder_pending_payments[SLOTS_PER_EPOCH + state.slot % SLOTS_PER_EPOCH] = (
-        BuilderPendingPayment()
-    )
 
     # Cache the execution payload hash
     state.execution_payload_availability[state.slot % SLOTS_PER_HISTORICAL_ROOT] = 0b1

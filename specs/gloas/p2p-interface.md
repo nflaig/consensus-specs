@@ -20,7 +20,6 @@
         - [`beacon_block`](#beacon_block)
         - [`execution_payload`](#execution_payload)
         - [`payload_attestation_message`](#payload_attestation_message)
-        - [`execution_payload_bid`](#execution_payload_bid)
       - [Blob subnets](#blob-subnets)
         - [`data_column_sidecar_{subnet_id}`](#data_column_sidecar_subnet_id)
       - [Attestation subnets](#attestation-subnets)
@@ -85,7 +84,7 @@ def compute_fork_version(epoch: Epoch) -> Version:
 have been removed from `DataColumnSidecar` in Gloas as header and inclusion
 proof verifications are no longer required in ePBS. Instead, sidecars are
 validated by checking that the hash of `kzg_commitments` matches what's
-committed in the builder's bid for the corresponding `beacon_block_root`.
+committed in the payload commitment for the corresponding `beacon_block_root`.
 
 ```python
 class DataColumnSidecar(Container):
@@ -154,14 +153,13 @@ are given in this table:
 
 | Name                          | Message Type                     |
 | ----------------------------- | -------------------------------- |
-| `execution_payload_bid`       | `SignedExecutionPayloadBid`      |
 | `execution_payload`           | `SignedExecutionPayloadEnvelope` |
 | `payload_attestation_message` | `PayloadAttestationMessage`      |
 
 ##### Global topics
 
-Gloas introduces new global topics for execution bid, execution payload and
-payload attestation.
+Gloas introduces new global topics for execution payload and payload
+attestation.
 
 ###### `beacon_aggregate_and_proof`
 
@@ -203,15 +201,15 @@ regards to the `ExecutionPayload` are removed:
     validation (including execution node verification of the
     `block.body.execution_payload`).
 
-And instead the following validations are set in place with the alias
-`bid = signed_execution_payload_bid.message`:
+And instead the following validations are set in place:
 
 - If `execution_payload` verification of block's execution payload parent by an
   execution node **is complete**:
   - [REJECT] The block's execution payload parent (defined by
-    `bid.parent_block_hash`) passes all validation.
-- [REJECT] The bid's parent (defined by `bid.parent_block_root`) equals the
-  block's parent (defined by `block.parent_root`).
+    `execution_payload_commitment.parent_block_hash`) passes all validation.
+- [REJECT] The payload commitment's parent (defined by
+  `execution_payload_commitment.parent_block_root`) equals the block's parent
+  (defined by `block.parent_root`).
 
 ###### `execution_payload`
 
@@ -227,21 +225,21 @@ The following validations MUST pass before forwarding the
   gossip or non-gossip sources) (a client MAY queue payload for processing once
   the block is retrieved).
 - _[IGNORE]_ The node has not seen another valid
-  `SignedExecutionPayloadEnvelope` for this block root from this builder.
+  `SignedExecutionPayloadEnvelope` for this block root.
 - _[IGNORE]_ The envelope is from a slot greater than or equal to the latest
   finalized slot -- i.e. validate that
   `envelope.slot >= compute_start_slot_at_epoch(store.finalized_checkpoint.epoch)`
 
-Let `block` be the block with `envelope.beacon_block_root`. Let `bid` alias
-`block.body.signed_execution_payload_bid.message` (notice that this can be
-obtained from the `state.latest_execution_payload_bid`)
+Let `block` be the block with `envelope.beacon_block_root`. Let
+`payload_commitment` alias `block.body.execution_payload_commitment` (notice
+that this can be obtained from the `state.latest_execution_payload_commitment`)
 
 - _[REJECT]_ `block` passes validation.
 - _[REJECT]_ `block.slot` equals `envelope.slot`.
-- _[REJECT]_ `envelope.builder_index == bid.builder_index`
-- _[REJECT]_ `payload.block_hash == bid.block_hash`
+- _[REJECT]_ `envelope.pubkey == payload_commitment.pubkey`
+- _[REJECT]_ `payload.block_hash == payload_commitment.block_hash`
 - _[REJECT]_ `signed_execution_payload_envelope.signature` is valid with respect
-  to the builder's public key.
+  to the public key in the payload commitment.
 
 ###### `payload_attestation_message`
 
@@ -267,36 +265,6 @@ The following validations MUST pass before forwarding the
 - _[REJECT]_ `payload_attestation_message.signature` is valid with respect to
   the validator's public key.
 
-###### `execution_payload_bid`
-
-This topic is used to propagate signed bids as `SignedExecutionPayloadBid`.
-
-The following validations MUST pass before forwarding the
-`signed_execution_payload_bid` on the network, assuming the alias
-`bid = signed_execution_payload_bid.message`:
-
-- _[REJECT]_ `bid.builder_index` is a valid, active, and non-slashed builder
-  index.
-- _[REJECT]_ the builder's withdrawal credentials' prefix is
-  `BUILDER_WITHDRAWAL_PREFIX` -- i.e.
-  `is_builder_withdrawal_credential(state.validators[bid.builder_index].withdrawal_credentials)`
-  returns `True`.
-- _[REJECT]_ `bid.execution_payment` is zero.
-- _[IGNORE]_ this is the first signed bid seen with a valid signature from the
-  given builder for this slot.
-- _[IGNORE]_ this bid is the highest value bid seen for the corresponding slot
-  and the given parent block hash.
-- _[IGNORE]_ `bid.value` is less or equal than the builder's excess balance --
-  i.e.
-  `MIN_ACTIVATION_BALANCE + bid.value <= state.balances[bid.builder_index]`.
-- _[IGNORE]_ `bid.parent_block_hash` is the block hash of a known execution
-  payload in fork choice.
-- _[IGNORE]_ `bid.parent_block_root` is the hash tree root of a known beacon
-  block in fork choice.
-- _[IGNORE]_ `bid.slot` is the current slot or the next slot.
-- _[REJECT]_ `signed_execution_payload_bid.signature` is valid with respect to
-  the `bid.builder_index`.
-
 ##### Blob subnets
 
 ###### `data_column_sidecar_{subnet_id}`
@@ -319,11 +287,11 @@ The following validations MUST pass before forwarding the
 **Added in Gloas:**
 
 - _[IGNORE]_ The sidecar's `beacon_block_root` has been seen via a valid signed
-  execution payload header (builder's bid).
+  execution payload header (payload commitment).
 - _[REJECT]_ The sidecars's `slot` matches the slot of the block with root
   `beacon_block_root`.
 - _[REJECT]_ The hash of the sidecar's `kzg_commitments` matches the
-  `blob_kzg_commitments_root` in the corresponding builder's bid for
+  `blob_kzg_commitments_root` in the corresponding payload commitment for
   `sidecar.beacon_block_root`.
 
 **Removed from Fulu:**
