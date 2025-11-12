@@ -38,8 +38,6 @@
     - [New `get_indexed_payload_attestation`](#new-get_indexed_payload_attestation)
 - [Beacon chain state transition function](#beacon-chain-state-transition-function)
   - [Modified `process_slot`](#modified-process_slot)
-  - [Epoch processing](#epoch-processing)
-    - [Modified `process_epoch`](#modified-process_epoch)
   - [Block processing](#block-processing)
     - [Withdrawals](#withdrawals)
       - [Modified `process_withdrawals`](#modified-process_withdrawals)
@@ -525,29 +523,6 @@ def process_slot(state: BeaconState) -> None:
     # [New in Gloas:EIP7732]
     # Unset the next payload availability
     state.execution_payload_availability[(state.slot + 1) % SLOTS_PER_HISTORICAL_ROOT] = 0b0
-```
-
-### Epoch processing
-
-#### Modified `process_epoch`
-
-```python
-def process_epoch(state: BeaconState) -> None:
-    process_justification_and_finalization(state)
-    process_inactivity_updates(state)
-    process_rewards_and_penalties(state)
-    process_registry_updates(state)
-    process_slashings(state)
-    process_eth1_data_reset(state)
-    process_pending_deposits(state)
-    process_pending_consolidations(state)
-    process_effective_balance_updates(state)
-    process_slashings_reset(state)
-    process_randao_mixes_reset(state)
-    process_historical_summaries_update(state)
-    process_participation_flag_updates(state)
-    process_sync_committee_updates(state)
-    process_proposer_lookahead(state)
 ```
 
 ### Block processing
