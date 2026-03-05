@@ -197,16 +197,16 @@ def get_forkchoice_store(anchor_state: BeaconState, anchor_block: BeaconBlock) -
 
 ```python
 def notify_ptc_messages(
-    store: Store, state: BeaconState, payload_attestations: Sequence[PayloadAttestation]
+    store: Store, ptc_state: BeaconState, payload_attestations: Sequence[PayloadAttestation]
 ) -> None:
     """
     Extracts a list of ``PayloadAttestationMessage`` from ``payload_attestations`` and updates the store with them
     These Payload attestations are assumed to be in the beacon block hence signature verification is not needed
     """
-    if state.slot == 0:
+    if ptc_state.slot == 0:
         return
     for payload_attestation in payload_attestations:
-        indexed_payload_attestation = get_indexed_payload_attestation(state, payload_attestation)
+        indexed_payload_attestation = get_indexed_payload_attestation(ptc_state, payload_attestation)
         for idx in indexed_payload_attestation.attesting_indices:
             on_payload_attestation_message(
                 store,
@@ -751,6 +751,8 @@ def on_block(store: Store, signed_block: SignedBeaconBlock) -> None:
     else:
         assert bid.parent_block_hash == parent_bid.parent_block_hash
         state = copy(store.block_states[block.parent_root])
+    # PTC for block.slot - 1 is computed against the parent block state.
+    ptc_state = copy(state)
 
     # Blocks cannot be in the future. If they are, their consideration must be delayed until they are in the past.
     current_slot = get_current_slot(store)
@@ -780,7 +782,7 @@ def on_block(store: Store, signed_block: SignedBeaconBlock) -> None:
     store.payload_data_availability_vote[block_root] = [False] * PTC_SIZE
 
     # Notify the store about the payload_attestations in the block
-    notify_ptc_messages(store, state, block.body.payload_attestations)
+    notify_ptc_messages(store, ptc_state, block.body.payload_attestations)
 
     record_block_timeliness(store, block_root)
     update_proposer_boost_root(store, block_root)

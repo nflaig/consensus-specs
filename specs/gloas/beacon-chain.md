@@ -708,7 +708,12 @@ def get_attestation_participation_flag_indices(
 ```python
 def get_ptc(state: BeaconState, slot: Slot) -> Vector[ValidatorIndex, PTC_SIZE]:
     """
-    Get the payload timeliness committee for the given ``slot``.
+    Get the payload timeliness committee for the given ``slot`` in the context
+    of ``state``.
+
+    For payload attestation validation at ``data.slot``, ``state`` MUST be the
+    block state corresponding to ``data.beacon_block_root`` (i.e. state at
+    ``data.slot``), not the verifier's latest head state.
     """
     epoch = compute_epoch_at_slot(slot)
     seed = hash(get_seed(state, epoch, DOMAIN_PTC_ATTESTER) + uint_to_bytes(slot))
@@ -727,13 +732,13 @@ def get_ptc(state: BeaconState, slot: Slot) -> Vector[ValidatorIndex, PTC_SIZE]:
 
 ```python
 def get_indexed_payload_attestation(
-    state: BeaconState, payload_attestation: PayloadAttestation
+    ptc_state: BeaconState, payload_attestation: PayloadAttestation
 ) -> IndexedPayloadAttestation:
     """
     Return the indexed payload attestation corresponding to ``payload_attestation``.
     """
     slot = payload_attestation.data.slot
-    ptc = get_ptc(state, slot)
+    ptc = get_ptc(ptc_state, slot)
     bits = payload_attestation.aggregation_bits
     attesting_indices = [index for i, index in enumerate(ptc) if bits[i]]
 
@@ -856,7 +861,9 @@ def process_builder_pending_payments(state: BeaconState) -> None:
 ### Block processing
 
 ```python
-def process_block(state: BeaconState, block: BeaconBlock) -> None:
+def process_block(state: BeaconState, block: BeaconBlock, ptc_state: BeaconState = None) -> None:
+    if ptc_state is None:
+        ptc_state = state
     process_block_header(state, block)
     # [Modified in Gloas:EIP7732]
     process_withdrawals(state)
@@ -867,7 +874,7 @@ def process_block(state: BeaconState, block: BeaconBlock) -> None:
     process_randao(state, block.body)
     process_eth1_data(state, block.body)
     # [Modified in Gloas:EIP7732]
-    process_operations(state, block.body)
+    process_operations(state, block.body, ptc_state)
     process_sync_aggregate(state, block.body.sync_aggregate)
 ```
 
@@ -1152,7 +1159,9 @@ calls to `process_deposit_request`, `process_withdrawal_request`, and
 `process_consolidation_request`.
 
 ```python
-def process_operations(state: BeaconState, body: BeaconBlockBody) -> None:
+def process_operations(state: BeaconState, body: BeaconBlockBody, ptc_state: BeaconState = None) -> None:
+    if ptc_state is None:
+        ptc_state = state
     # Disable former deposit mechanism once all prior deposits are processed
     eth1_deposit_index_limit = min(
         state.eth1_data.deposit_count, state.deposit_requests_start_index
@@ -1184,7 +1193,8 @@ def process_operations(state: BeaconState, body: BeaconBlockBody) -> None:
     # [Modified in Gloas:EIP7732]
     # Removed `process_consolidation_request`
     # [New in Gloas:EIP7732]
-    for_ops(body.payload_attestations, process_payload_attestation)
+    for payload_attestation in body.payload_attestations:
+        process_payload_attestation(state, payload_attestation, ptc_state)
 ```
 
 ##### Deposit requests
@@ -1435,17 +1445,20 @@ def process_attestation(state: BeaconState, attestation: Attestation) -> None:
 
 ```python
 def process_payload_attestation(
-    state: BeaconState, payload_attestation: PayloadAttestation
+    state: BeaconState, payload_attestation: PayloadAttestation, ptc_state: BeaconState = None
 ) -> None:
+    if ptc_state is None:
+        ptc_state = state
     data = payload_attestation.data
 
     # Check that the attestation is for the parent beacon block
     assert data.beacon_block_root == state.latest_block_header.parent_root
     # Check that the attestation is for the previous slot
     assert data.slot + 1 == state.slot
-    # Verify signature
-    indexed_payload_attestation = get_indexed_payload_attestation(state, payload_attestation)
-    assert is_valid_indexed_payload_attestation(state, indexed_payload_attestation)
+    # Verify signature against PTC at `data.slot`.
+    # `ptc_state` should be the block state corresponding to `data.beacon_block_root`.
+    indexed_payload_attestation = get_indexed_payload_attestation(ptc_state, payload_attestation)
+    assert is_valid_indexed_payload_attestation(ptc_state, indexed_payload_attestation)
 ```
 
 ##### Proposer slashing

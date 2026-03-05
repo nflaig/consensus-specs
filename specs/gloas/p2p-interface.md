@@ -316,8 +316,9 @@ The following validations MUST pass before forwarding the
   after).
 - _[REJECT]_ The message's block `data.beacon_block_root` passes validation.
 - _[REJECT]_ The message's validator index is within the payload committee in
-  `get_ptc(state, data.slot)`. The `state` is the head state corresponding to
-  processing the block up to the current slot as determined by the fork choice.
+  `get_ptc(state, data.slot)`. The `state` MUST correspond to
+  `data.beacon_block_root` (the block state at `data.slot`), not the current
+  head state at gossip validation time.
 - _[REJECT]_ `payload_attestation_message.signature` is valid with respect to
   the validator's public key.
 
