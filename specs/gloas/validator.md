@@ -74,8 +74,8 @@ def get_ptc_assignment(
 ### Lookahead
 
 `get_ptc_assignment` should be called at the start of each epoch to get the
-assignment for the current epoch. A validator should plan for future assignments
-by noting their assigned PTC slot.
+assignment for the current epoch. A validator should note their assigned PTC
+slot for that epoch.
 
 ## Beacon chain responsibilities
 
@@ -241,10 +241,9 @@ def prepare_execution_payload(
 ### Payload timeliness attestation
 
 Some validators are selected to submit payload timeliness attestations.
-Validators should call
-`get_ptc_assignment(state, get_current_epoch(state), validator_index)` at the
-beginning of the epoch to determine the slot during the current epoch in which
-they should submit their PTC attestation.
+Validators should call `get_ptc_assignment` at the beginning of the epoch to
+determine the slot during the current epoch in which they should submit their
+PTC attestation.
 
 A validator should create and broadcast the `payload_attestation_message` to the
 global execution attestation subnet within the first
