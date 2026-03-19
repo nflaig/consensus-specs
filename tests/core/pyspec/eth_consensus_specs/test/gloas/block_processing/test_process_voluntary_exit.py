@@ -99,7 +99,6 @@ def test_builder_voluntary_exit__invalid__inactive_already_exited(spec, state):
     signed_voluntary_exit = sign_voluntary_exit(spec, state, voluntary_exit, privkey)
 
     yield "pre", state
-    yield "voluntary_exit", signed_voluntary_exit
     expect_assertion_error(lambda: spec.process_voluntary_exit(state, signed_voluntary_exit))
     yield "post", None
 

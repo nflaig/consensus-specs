@@ -18,18 +18,6 @@ def _compute_first_ptc_assignments(spec, state, epoch):
     return assignments
 
 
-def _run_get_ptc_assignments(spec, state, epoch, valid=True, assignments=None):
-    if not valid:
-        expect_assertion_error(
-            lambda: spec.get_ptc_assignment(state, epoch, spec.ValidatorIndex(0))
-        )
-        return
-
-    if assignments is None:
-        assignments = _compute_first_ptc_assignments(spec, state, epoch)
-    _assert_get_ptc_assignments(spec, state, epoch, assignments)
-
-
 def _assert_get_ptc_assignments(spec, state, epoch, assignments):
     assert len(assignments) > 0
 
@@ -49,12 +37,12 @@ def _assert_get_ptc_assignments(spec, state, epoch, assignments):
 @with_state
 @single_phase
 def test_get_ptc_assignment__previous_epoch(spec, state):
-    """Previous epoch queries should fail with tightened assert."""
-    next_epoch(spec, state)
     next_epoch(spec, state)
 
     epoch = spec.Epoch(spec.get_current_epoch(state) - 1)
-    _run_get_ptc_assignments(spec, state, epoch, valid=False)
+    expect_assertion_error(
+        lambda: spec.get_ptc_assignment(state, epoch, spec.ValidatorIndex(0))
+    )
 
 
 @with_phases([GLOAS])
@@ -63,22 +51,16 @@ def test_get_ptc_assignment__previous_epoch(spec, state):
 @single_phase
 def test_get_ptc_assignment__current_epoch(spec, state):
     epoch = spec.get_current_epoch(state)
-    _run_get_ptc_assignments(spec, state, epoch, valid=True)
+    assignments = _compute_first_ptc_assignments(spec, state, epoch)
+    _assert_get_ptc_assignments(spec, state, epoch, assignments)
 
 
 @with_phases([GLOAS])
 @spec_test
 @with_state
 @single_phase
-def test_get_ptc_assignment__current_epoch_plus_1(spec, state):
+def test_get_ptc_assignment__next_epoch(spec, state):
     epoch = spec.Epoch(spec.get_current_epoch(state) + 1)
-    _run_get_ptc_assignments(spec, state, epoch, valid=True)
-
-
-@with_phases([GLOAS])
-@spec_test
-@with_state
-@single_phase
-def test_get_ptc_assignment__current_epoch_plus_2(spec, state):
-    epoch = spec.Epoch(spec.get_current_epoch(state) + 2)
-    _run_get_ptc_assignments(spec, state, epoch, valid=False)
+    expect_assertion_error(
+        lambda: spec.get_ptc_assignment(state, epoch, spec.ValidatorIndex(0))
+    )

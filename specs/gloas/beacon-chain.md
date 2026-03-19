@@ -643,6 +643,7 @@ def compute_ptc(state: BeaconState, slot: Slot) -> Vector[ValidatorIndex, PTC_SI
     using the state's current effective balances.
     """
     epoch = compute_epoch_at_slot(slot)
+    assert epoch <= get_current_epoch(state)
     seed = hash(get_seed(state, epoch, DOMAIN_PTC_ATTESTER) + uint_to_bytes(slot))
     indices: List[ValidatorIndex] = []
     # Concatenate all committees for this slot in order
@@ -730,12 +731,11 @@ def get_attestation_participation_flag_indices(
 
 #### New `get_ptc`
 
-*Note*: `get_ptc` uses the cached `previous_epoch_last_ptc` for the last slot of the
-previous epoch, and computes all other PTCs on demand via `compute_ptc`. Only
-the previous epoch's last-slot PTC requires caching because
-`process_payload_attestation` enforces `data.slot + 1 == state.slot`, and the
-cross-epoch case (where effective balances differ) only occurs at the epoch
-boundary.
+*Note*: `get_ptc` uses the cached `previous_epoch_last_ptc` for
+the last slot of the previous epoch. This is sufficient because
+`process_payload_attestation` requires `data.slot + 1 == state.slot`,
+and the only case where effective balance updates can change the
+computed PTC occurs at the epoch boundary.
 
 ```python
 def get_ptc(state: BeaconState, slot: Slot) -> Vector[ValidatorIndex, PTC_SIZE]:
@@ -744,7 +744,7 @@ def get_ptc(state: BeaconState, slot: Slot) -> Vector[ValidatorIndex, PTC_SIZE]:
     """
     epoch = compute_epoch_at_slot(slot)
     state_epoch = get_current_epoch(state)
-    assert epoch + 1 >= state_epoch and epoch <= state_epoch + 1
+    assert epoch + 1 >= state_epoch and epoch <= state_epoch
     if epoch + 1 == state_epoch:
         assert slot % SLOTS_PER_EPOCH == SLOTS_PER_EPOCH - 1
         return state.previous_epoch_last_ptc
@@ -842,9 +842,6 @@ def process_slot(state: BeaconState) -> None:
 ### Epoch processing
 
 #### Modified `process_epoch`
-
-*Note*: The function `process_epoch` is modified in Gloas to call the new
-helpers `process_ptc_update` and `process_builder_pending_payments`.
 
 ```python
 def process_epoch(state: BeaconState) -> None:

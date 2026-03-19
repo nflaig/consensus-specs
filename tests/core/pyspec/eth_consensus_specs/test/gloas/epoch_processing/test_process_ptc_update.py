@@ -1,4 +1,5 @@
 from eth_consensus_specs.test.context import (
+    expect_assertion_error,
     single_phase,
     spec_state_test,
     with_phases,
@@ -65,12 +66,20 @@ def test_get_ptc_computes_current_epoch_on_demand(spec, state):
 @with_phases([GLOAS])
 @spec_state_test
 @single_phase
-def test_get_ptc_computes_next_epoch_on_demand(spec, state):
+def test_compute_ptc_next_epoch_asserts(spec, state):
     """
-    Test that get_ptc can compute next epoch PTCs on demand.
+    Test that compute_ptc does not allow next-epoch computation.
     """
     next_epoch_slot = spec.Slot(spec.SLOTS_PER_EPOCH)
-    ptc = spec.get_ptc(state, next_epoch_slot)
-    computed = spec.compute_ptc(state, next_epoch_slot)
+    expect_assertion_error(lambda: spec.compute_ptc(state, next_epoch_slot))
 
-    assert list(ptc) == list(computed)
+
+@with_phases([GLOAS])
+@spec_state_test
+@single_phase
+def test_get_ptc_next_epoch_asserts(spec, state):
+    """
+    Test that get_ptc does not allow next-epoch lookups.
+    """
+    next_epoch_slot = spec.Slot(spec.SLOTS_PER_EPOCH)
+    expect_assertion_error(lambda: spec.get_ptc(state, next_epoch_slot))
