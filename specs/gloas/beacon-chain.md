@@ -731,11 +731,10 @@ def get_attestation_participation_flag_indices(
 
 #### New `get_ptc`
 
-*Note*: `get_ptc` uses the cached `previous_epoch_last_ptc` for
-the last slot of the previous epoch. This is sufficient because
-`process_payload_attestation` requires `data.slot + 1 == state.slot`,
-and the only case where effective balance updates can change the
-computed PTC occurs at the epoch boundary.
+*Note*: `get_ptc` uses the cached `previous_epoch_last_ptc` for the last slot of
+the previous epoch. This is sufficient because `process_payload_attestation`
+requires `data.slot + 1 == state.slot`, and the only case where effective
+balance updates can change the computed PTC occurs at the epoch boundary.
 
 ```python
 def get_ptc(state: BeaconState, slot: Slot) -> Vector[ValidatorIndex, PTC_SIZE]:
