@@ -16,6 +16,8 @@
     - [Modified `compute_fork_version`](#modified-compute_fork_version)
     - [Modified `verify_data_column_sidecar_kzg_proofs`](#modified-verify_data_column_sidecar_kzg_proofs)
     - [Modified `verify_data_column_sidecar`](#modified-verify_data_column_sidecar)
+    - [New `verify_payload_attestation_message_signature`](#new-verify_payload_attestation_message_signature)
+    - [New `verify_proposer_preferences_signature`](#new-verify_proposer_preferences_signature)
   - [The gossip domain: gossipsub](#the-gossip-domain-gossipsub)
     - [Topics and messages](#topics-and-messages)
       - [Global topics](#global-topics)
@@ -201,6 +203,39 @@ def verify_data_column_sidecar(
     return True
 ```
 
+#### New `verify_payload_attestation_message_signature`
+
+*[New in Gloas:EIP7732]*
+
+```python
+def verify_payload_attestation_message_signature(
+    state: BeaconState, signed_attestation: PayloadAttestationMessage
+) -> bool:
+    pubkey = state.validators[signed_attestation.validator_index].pubkey
+    domain = get_domain(
+        state, DOMAIN_PTC_ATTESTER, compute_epoch_at_slot(signed_attestation.data.slot)
+    )
+    signing_root = compute_signing_root(signed_attestation.data, domain)
+    return bls.Verify(pubkey, signing_root, signed_attestation.signature)
+```
+
+#### New `verify_proposer_preferences_signature`
+
+*[New in Gloas:EIP7732]*
+
+```python
+def verify_proposer_preferences_signature(
+    state: BeaconState, signed_preferences: SignedProposerPreferences
+) -> bool:
+    preferences = signed_preferences.message
+    pubkey = state.validators[preferences.validator_index].pubkey
+    domain = get_domain(
+        state, DOMAIN_PROPOSER_PREFERENCES, compute_epoch_at_slot(preferences.proposal_slot)
+    )
+    signing_root = compute_signing_root(preferences, domain)
+    return bls.Verify(pubkey, signing_root, signed_preferences.signature)
+```
+
 ### The gossip domain: gossipsub
 
 Some gossip meshes are upgraded in Gloas to support upgraded types.
@@ -341,8 +376,8 @@ The following validations MUST pass before forwarding the
 - _[REJECT]_ The message's validator index is within the payload committee in
   `get_ptc(state, data.slot)`. The `state` is the head state corresponding to
   processing the block up to the current slot as determined by the fork choice.
-- _[REJECT]_ `payload_attestation_message.signature` is valid with respect to
-  the validator's public key.
+- _[REJECT]_ `payload_attestation_message.signature` is valid as verified by
+  `verify_payload_attestation_message_signature`.
 
 ###### `execution_payload_bid`
 
@@ -375,8 +410,8 @@ The following validations MUST pass before forwarding the
   payload in fork choice.
 - _[IGNORE]_ `bid.parent_block_root` is the hash tree root of a known beacon
   block in fork choice.
-- _[REJECT]_ `signed_execution_payload_bid.signature` is valid with respect to
-  the `bid.builder_index`.
+- _[REJECT]_ `signed_execution_payload_bid.signature` is valid as verified by
+  `verify_execution_payload_bid_signature`.
 
 *Note*: Implementations SHOULD include DoS prevention measures to mitigate spam
 from malicious builders submitting numerous bids with minimal value increments.
@@ -407,8 +442,8 @@ The following validations MUST pass before forwarding the
 - _[IGNORE]_ The `signed_proposer_preferences` is the first valid message
   received from the validator with index `preferences.validator_index` and the
   given slot `preferences.proposal_slot`.
-- _[REJECT]_ `signed_proposer_preferences.signature` is valid with respect to
-  the validator's public key.
+- _[REJECT]_ `signed_proposer_preferences.signature` is valid as verified by
+  `verify_proposer_preferences_signature`.
 
 ```python
 def is_valid_proposal_slot(state: BeaconState, preferences: ProposerPreferences) -> bool:
