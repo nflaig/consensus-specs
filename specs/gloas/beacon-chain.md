@@ -555,6 +555,21 @@ def convert_validator_index_to_builder_index(validator_index: ValidatorIndex) ->
 #### New `get_pending_balance_to_withdraw_for_builder`
 
 ```python
+def get_reserved_balance_to_withdraw(state: BeaconState, validator_index: ValidatorIndex) -> Gwei:
+    return sum(
+        withdrawal.amount
+        for withdrawal in state.payload_expected_withdrawals
+        if withdrawal.validator_index == validator_index
+    )
+
+
+def get_spendable_balance(state: BeaconState, validator_index: ValidatorIndex) -> Gwei:
+    return max(
+        Gwei(0),
+        state.balances[validator_index] - get_reserved_balance_to_withdraw(state, validator_index),
+    )
+
+
 def get_pending_balance_to_withdraw_for_builder(
     state: BeaconState, builder_index: BuilderIndex
 ) -> Gwei:
@@ -566,6 +581,11 @@ def get_pending_balance_to_withdraw_for_builder(
         payment.withdrawal.amount
         for payment in state.builder_pending_payments
         if payment.withdrawal.builder_index == builder_index
+    ) + sum(
+        withdrawal.amount
+        for withdrawal in state.payload_expected_withdrawals
+        if is_builder_index(withdrawal.validator_index)
+        and convert_validator_index_to_builder_index(withdrawal.validator_index) == builder_index
     )
 ```
 
@@ -581,6 +601,14 @@ def can_builder_cover_bid(
     if builder_balance < min_balance:
         return False
     return builder_balance - min_balance >= bid_amount
+
+
+
+def decrease_balance(state: BeaconState, index: ValidatorIndex, delta: Gwei) -> None:
+    state.balances[index] = max(
+        get_reserved_balance_to_withdraw(state, index),
+        state.balances[index] - delta,
+    )
 ```
 
 #### New `compute_balance_weighted_selection`
@@ -882,6 +910,34 @@ def process_epoch(state: BeaconState) -> None:
     process_ptc_window(state)
 ```
 
+#### Modified `process_pending_consolidations`
+
+```python
+def process_pending_consolidations(state: BeaconState) -> None:
+    next_epoch = Epoch(get_current_epoch(state) + 1)
+    next_pending_consolidation = 0
+    for pending_consolidation in state.pending_consolidations:
+        source_validator = state.validators[pending_consolidation.source_index]
+        if source_validator.slashed:
+            next_pending_consolidation += 1
+            continue
+        if source_validator.withdrawable_epoch > next_epoch:
+            break
+
+        # Calculate the consolidated balance from spendable funds only.
+        source_effective_balance = min(
+            get_spendable_balance(state, pending_consolidation.source_index),
+            source_validator.effective_balance,
+        )
+
+        # Move active balance to target. Excess balance is withdrawable.
+        decrease_balance(state, pending_consolidation.source_index, source_effective_balance)
+        increase_balance(state, pending_consolidation.target_index, source_effective_balance)
+        next_pending_consolidation += 1
+
+    state.pending_consolidations = state.pending_consolidations[next_pending_consolidation:]
+```
+
 #### New `process_builder_pending_payments`
 
 ```python
@@ -940,10 +996,11 @@ def process_block(state: BeaconState, block: BeaconBlock) -> None:
 
 ##### New `apply_parent_execution_payload`
 
-*Note*: This function processes the parent's execution requests, queues the
-builder payment, updates payload availability, and updates the latest block
-hash. It is called by `process_parent_execution_payload` during block processing
-and by the validator during block production before computing withdrawals.
+*Note*: This function applies the withdrawals committed by the parent's payload,
+processes the parent's execution requests, queues the builder payment, updates
+payload availability, and updates the latest block hash. It is called by
+`process_parent_execution_payload` during block processing and by the validator
+during block production before computing withdrawals.
 
 ```python
 def apply_parent_execution_payload(
@@ -953,6 +1010,16 @@ def apply_parent_execution_payload(
 ) -> None:
     parent_slot = parent_bid.slot
     parent_epoch = compute_epoch_at_slot(parent_slot)
+
+    # [New in Gloas:EIP7732]
+    # Apply withdrawals committed by the parent's payload. These were computed
+    # at the parent's slot and cached in `state.payload_expected_withdrawals`,
+    # which acts as an outstanding withdrawal liability between parent-slot
+    # commitment and child-slot application. This preserves `state.balances`
+    # consistency with the EL state at `state.latest_block_hash` while still
+    # reserving the committed value from intermediate spendability.
+    apply_withdrawals(state, state.payload_expected_withdrawals)
+    state.payload_expected_withdrawals = []
 
     # Process execution requests from parent's payload. The execution
     # requests are processed at state.slot (child's slot), not the parent's slot.
@@ -1142,7 +1209,10 @@ def apply_withdrawals(state: BeaconState, withdrawals: Sequence[Withdrawal]) -> 
             builder_balance = state.builders[builder_index].balance
             state.builders[builder_index].balance -= min(withdrawal.amount, builder_balance)
         else:
-            decrease_balance(state, withdrawal.validator_index, withdrawal.amount)
+            state.balances[withdrawal.validator_index] = max(
+                Gwei(0),
+                state.balances[withdrawal.validator_index] - withdrawal.amount,
+            )
 ```
 
 ##### New `update_payload_expected_withdrawals`
@@ -1183,9 +1253,14 @@ def update_next_withdrawal_builder_index(
 *Note*: This is modified to only take the `state` as parameter. Withdrawals are
 deterministic given the beacon state, any execution payload that has the
 corresponding block as parent beacon block is required to honor these
-withdrawals in the execution layer. `process_withdrawals` must be called after
+withdrawals in the execution layer. `process_withdrawals` computes the expected
+withdrawals for the current block's payload and caches them in
+`state.payload_expected_withdrawals`; the actual CL-side balance deduction is
+deferred to `apply_parent_execution_payload` at the child's slot, so that
+`state.balances` remains consistent with the EL state at
+`state.latest_block_hash`. `process_withdrawals` must be called after
 `process_parent_execution_payload` (which updates `state.latest_block_hash`) and
-before `process_execution_payload_bid` as the latter function affects validator
+before `process_execution_payload_bid` as the latter function affects builder
 balances.
 
 ```python
@@ -1202,8 +1277,12 @@ def process_withdrawals(
     # Get expected withdrawals
     expected = get_expected_withdrawals(state)
 
-    # Apply expected withdrawals
-    apply_withdrawals(state, expected.withdrawals)
+    # [Modified in Gloas:EIP7732]
+    # Note: CL balance deduction is deferred to `apply_parent_execution_payload`
+    # at the child's slot, once the parent's payload is known to be FULL.
+    # The cached `state.payload_expected_withdrawals` simultaneously acts as
+    # an outstanding liability so the committed value is reserved between
+    # parent-slot commitment and child-slot application.
 
     # Update withdrawals fields in the state
     update_next_withdrawal_index(state, expected.withdrawals)
