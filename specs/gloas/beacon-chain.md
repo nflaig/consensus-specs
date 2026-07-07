@@ -52,6 +52,8 @@
     - [New `is_builder_index`](#new-is_builder_index)
     - [New `is_active_builder`](#new-is_active_builder)
     - [New `is_builder_withdrawal_credential`](#new-is_builder_withdrawal_credential)
+    - [New `has_builder_withdrawal_credential_prefix`](#new-has_builder_withdrawal_credential_prefix)
+    - [New `get_builder_version`](#new-get_builder_version)
     - [New `is_attestation_same_slot`](#new-is_attestation_same_slot)
     - [New `is_valid_indexed_payload_attestation`](#new-is_valid_indexed_payload_attestation)
     - [New `is_pending_validator`](#new-is_pending_validator)
@@ -188,13 +190,15 @@ same `Withdrawal` container can be used for validators and builders.
 
 ### Withdrawal prefixes
 
-*Note*: `BUILDER_WITHDRAWAL_PREFIX` is a temporary constant which is only used
-to onboard builders at the fork. It will be deprecated after the upgrade and a
-future validator withdrawal prefix may reuse this value.
+*Note*: The `BUILDER_WITHDRAWAL_PREFIX_*` range is reserved for builder deposit
+requests. `BUILDER_WITHDRAWAL_PREFIX_MIN` is also used to onboard payload
+builders at the fork. These constants may be deprecated after the upgrade and a
+future validator withdrawal prefix may reuse these values.
 
-| Name                        | Value            |
-| --------------------------- | ---------------- |
-| `BUILDER_WITHDRAWAL_PREFIX` | `Bytes1('0xB0')` |
+| Name                            | Value            |
+| ------------------------------- | ---------------- |
+| `BUILDER_WITHDRAWAL_PREFIX_MIN` | `Bytes1('0xB0')` |
+| `BUILDER_WITHDRAWAL_PREFIX_MAX` | `Bytes1('0xBF')` |
 
 ### Builder versions
 
@@ -637,7 +641,25 @@ def is_active_builder(state: BeaconState, builder_index: BuilderIndex) -> bool:
 
 ```python
 def is_builder_withdrawal_credential(withdrawal_credentials: Bytes32) -> bool:
-    return withdrawal_credentials[:1] == BUILDER_WITHDRAWAL_PREFIX
+    return withdrawal_credentials[:1] == BUILDER_WITHDRAWAL_PREFIX_MIN
+```
+
+#### New `has_builder_withdrawal_credential_prefix`
+
+```python
+def has_builder_withdrawal_credential_prefix(withdrawal_credentials: Bytes32) -> bool:
+    prefix = withdrawal_credentials[0]
+    return (
+        prefix >= BUILDER_WITHDRAWAL_PREFIX_MIN[0]
+        and prefix <= BUILDER_WITHDRAWAL_PREFIX_MAX[0]
+    )
+```
+
+#### New `get_builder_version`
+
+```python
+def get_builder_version(withdrawal_credentials: Bytes32) -> uint8:
+    return uint8(withdrawal_credentials[0] - BUILDER_WITHDRAWAL_PREFIX_MIN[0])
 ```
 
 #### New `is_attestation_same_slot`
@@ -1781,11 +1803,13 @@ caching should account for this behavior.
 def process_builder_deposit_request(state: BeaconState, request: BuilderDepositRequest) -> None:
     builder_pubkeys = [b.pubkey for b in state.builders]
     if request.pubkey not in builder_pubkeys:
+        if not has_builder_withdrawal_credential_prefix(request.withdrawal_credentials):
+            return
         if is_valid_builder_deposit_signature(request):
             add_builder_to_registry(
                 state,
                 request.pubkey,
-                uint8(request.withdrawal_credentials[0]),
+                get_builder_version(request.withdrawal_credentials),
                 ExecutionAddress(request.withdrawal_credentials[12:]),
                 request.amount,
                 state.slot,
