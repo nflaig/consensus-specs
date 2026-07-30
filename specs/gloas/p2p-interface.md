@@ -438,8 +438,8 @@ where `store` is the fork choice store, and the alias
   `is_gas_limit_target_compatible(parent_gas_limit, bid.gas_limit, proposer_preferences.target_gas_limit)`
   is `True` where `parent_gas_limit` is the `gas_limit` of that execution
   payload.
-- _[IGNORE]_ `bid.parent_block_root` is the hash tree root of a known beacon
-  block in fork choice.
+- _[IGNORE]_ `bid.parent_block_root` identifies a known candidate beacon block
+  in fork choice -- i.e. `is_bid_parent_candidate(store, bid)` returns `True`.
 - _[REJECT]_ The bid is for a higher slot than its parent block -- i.e. validate
   that `bid.slot` is greater than the slot of the block with root
   `bid.parent_block_root`.
@@ -449,6 +449,28 @@ where `store` is the fork choice store, and the alias
   the `bid.builder_index`.
 
 ```python
+def is_bid_parent_candidate(store: Store, bid: ExecutionPayloadBid) -> bool:
+    """
+    Return whether the bid's beacon block parent is known and is either at least
+    as recent as the local fork-choice head or a plausible re-org parent.
+    """
+    if bid.parent_block_root not in store.blocks:
+        return False
+
+    head = get_head(store)
+    head_block = store.blocks[head.root]
+    parent_block = store.blocks[bid.parent_block_root]
+    if parent_block.slot >= head_block.slot:
+        return True
+    if bid.parent_block_root != head_block.parent_root:
+        return False
+    return (
+        parent_block.slot + 1 == head_block.slot
+        and is_head_weak(store, head.root)
+        and is_parent_strong(store, head.root)
+    )
+
+
 def is_gas_limit_target_compatible(
     parent_gas_limit: Uint64, gas_limit: Uint64, target_gas_limit: Uint64
 ) -> bool:
@@ -466,6 +488,12 @@ def is_gas_limit_target_compatible(
         return gas_limit == max_gas_limit
     return gas_limit == min_gas_limit
 ```
+
+*Note*: The candidate-parent check limits propagation of bids on unrelated stale
+ancestors while allowing bids for competing recent heads. A bid on the direct
+parent is only forwarded when the local fork-choice view considers a proposer
+re-org plausible: the parent and head are consecutive, the head is weak, and the
+parent is strong. Relay and proposer fork-choice views may differ.
 
 *Note*: Implementations SHOULD include DoS prevention measures to mitigate spam
 from malicious builders submitting numerous bids with minimal value increments.
