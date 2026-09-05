@@ -29,6 +29,7 @@ from eth_consensus_specs.test.helpers.gossip import (
     get_filename,
     get_seen,
     run_validate_gossip,
+    setup_store_with_failed_block,
     wrap_genesis_block,
 )
 from eth_consensus_specs.test.helpers.keys import privkeys
@@ -1339,21 +1340,10 @@ def test_gossip_beacon_aggregate_and_proof__reject_block_failed_validation(spec,
     yield "state", anchor_state
 
     seen = get_seen(spec)
-    store, anchor_block = get_genesis_forkchoice_store_and_block(spec, state)
-    signed_anchor = wrap_genesis_block(spec, anchor_block)
+    store, signed_anchor, signed_block = setup_store_with_failed_block(spec, state)
 
     yield get_filename(signed_anchor), signed_anchor
-
-    next_slot(spec, state)
-
-    # Build and apply a block
-    block = build_empty_block_for_next_slot(spec, state)
-    signed_block = state_transition_and_sign_block(spec, state, block)
-
     yield get_filename(signed_block), signed_block
-
-    # Add block to store.blocks but NOT to store.block_states (simulating failed validation)
-    store.blocks[signed_block.message.hash_tree_root()] = signed_block.message
 
     yield (
         "blocks",
@@ -1364,7 +1354,9 @@ def test_gossip_beacon_aggregate_and_proof__reject_block_failed_validation(spec,
         ],
     )
 
-    attestation = get_valid_attestation(spec, state, signed=True)
+    attestation = get_valid_attestation(
+        spec, state, signed=True, beacon_block_root=signed_block.message.hash_tree_root()
+    )
     signed_agg = create_signed_aggregate_and_proof(spec, state, attestation)
 
     yield get_filename(signed_agg), signed_agg
