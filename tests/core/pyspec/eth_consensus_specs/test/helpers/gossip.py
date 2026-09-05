@@ -4,15 +4,19 @@ from typing import get_origin, get_type_hints
 from eth_utils import encode_hex
 
 from eth_consensus_specs.test.context import expect_assertion_error
+from eth_consensus_specs.test.helpers.attestations import next_epoch_with_attestations
 from eth_consensus_specs.test.helpers.block import (
+    build_empty_block,
     build_empty_block_for_next_slot,
     sign_block,
 )
 from eth_consensus_specs.test.helpers.fork_choice import (
+    get_block_file_name,
     get_genesis_forkchoice_store_and_block,
+    tick_and_add_block,
 )
 from eth_consensus_specs.test.helpers.forks import is_post_gloas
-from eth_consensus_specs.test.helpers.state import state_transition_and_sign_block
+from eth_consensus_specs.test.helpers.state import next_epoch, state_transition_and_sign_block
 
 PAYLOAD_STATUS_VALID = "VALID"
 PAYLOAD_STATUS_INVALIDATED = "INVALIDATED"
@@ -97,6 +101,49 @@ def get_spec_block_payload_statuses(spec, block_payload_statuses):
             spec_block_payload_statuses[block_root] = spec.PAYLOAD_STATUS_NOT_VALIDATED
 
     return spec_block_payload_statuses
+
+
+def setup_store_with_finalized_fork(spec, state):
+    """Import a competing branch before finalizing epoch two on the canonical chain."""
+    yield "state", state.copy()
+    store, anchor_block = get_genesis_forkchoice_store_and_block(spec, state)
+    signed_anchor = wrap_genesis_block(spec, anchor_block)
+    yield get_filename(signed_anchor), signed_anchor
+    blocks = [{"block": get_filename(signed_anchor)}]
+    test_steps = []
+
+    fork_state = state.copy()
+    fork_block = build_empty_block(spec, fork_state, slot=2 * spec.SLOTS_PER_EPOCH + 1)
+    signed_fork_block = state_transition_and_sign_block(spec, fork_state, fork_block)
+    fork_imported = False
+
+    next_epoch(spec, state)
+    for _ in range(3):
+        _, signed_blocks, state = next_epoch_with_attestations(
+            spec, state, fill_cur_epoch=True, fill_prev_epoch=True
+        )
+        for signed_block in signed_blocks:
+            if not fork_imported and signed_block.message.slot >= fork_block.slot:
+                yield from tick_and_add_block(spec, store, signed_fork_block, test_steps)
+                blocks.append({"block": get_block_file_name(signed_fork_block)})
+                fork_imported = True
+            yield from tick_and_add_block(spec, store, signed_block, test_steps)
+            blocks.append({"block": get_block_file_name(signed_block)})
+
+    assert store.finalized_checkpoint == state.finalized_checkpoint
+    assert store.finalized_checkpoint.epoch == 2
+    assert store.finalized_checkpoint.root in store.block_states
+    assert fork_block.slot > spec.compute_start_slot_at_epoch(store.finalized_checkpoint.epoch)
+    assert (
+        spec.get_ancestor(
+            store,
+            spec.ForkChoiceNode(root=fork_block.hash_tree_root()),
+            spec.compute_start_slot_at_epoch(2),
+        ).root
+        != store.finalized_checkpoint.root
+    )
+    yield "blocks", "meta", blocks
+    return store, state, fork_block.hash_tree_root()
 
 
 _MESSAGE_INFO = {

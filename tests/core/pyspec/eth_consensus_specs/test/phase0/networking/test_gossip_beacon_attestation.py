@@ -14,6 +14,7 @@ from eth_consensus_specs.test.helpers.block import (
 from eth_consensus_specs.test.helpers.constants import (
     DENEB,
     ELECTRA,
+    FULU,
     PHASE0,
 )
 from eth_consensus_specs.test.helpers.fork_choice import (
@@ -25,6 +26,7 @@ from eth_consensus_specs.test.helpers.gossip import (
     get_seen,
     run_validate_gossip,
     setup_store_with_failed_block,
+    setup_store_with_finalized_fork,
     wrap_genesis_block,
 )
 from eth_consensus_specs.test.helpers.keys import privkeys
@@ -138,17 +140,32 @@ def test_gossip_beacon_attestation__reject_committee_index_out_of_range(spec, st
 
     next_slot(spec, state)
 
-    attestation = get_valid_attestation(spec, state, signed=True, beacon_block_root=anchor_root)
+    valid_attestation = get_valid_attestation(
+        spec,
+        state,
+        signed=True,
+        beacon_block_root=anchor_root,
+        filter_participant_set=lambda participants: {min(participants)},
+    )
+    if is_post_electra(spec):
+        valid_attestation = to_single_attestation(spec, state, valid_attestation)
+    attestation = valid_attestation.copy()
 
     # Set committee index out of range
     committees_per_slot = spec.get_committee_count_per_slot(state, attestation.data.target.epoch)
     if is_post_electra(spec):
-        attestation = to_single_attestation(spec, state, attestation)
         attestation.committee_index = committees_per_slot + 10
     else:
         attestation.data.index = committees_per_slot + 10
+        committee = spec.get_beacon_committee(
+            state, valid_attestation.data.slot, valid_attestation.data.index
+        )
+        attestation.signature = spec.get_attestation_signature(
+            state, attestation.data, privkeys[min(committee)]
+        )
 
     yield get_filename(attestation), attestation
+    yield get_filename(valid_attestation), valid_attestation
 
     block_time_ms = spec.compute_time_at_slot_ms(store, attestation.data.slot)
 
@@ -170,6 +187,19 @@ def test_gossip_beacon_attestation__reject_committee_index_out_of_range(spec, st
     assert result == "reject"
     assert reason == "committee index out of range"
 
+    correct_subnet = get_correct_subnet_for_attestation(spec, state, valid_attestation)
+    valid_result, valid_reason = run_validate_gossip(
+        spec,
+        seen=seen,
+        store=store,
+        attestation=valid_attestation,
+        current_time_ms=block_time_ms + 500,
+        subnet_id=correct_subnet,
+        **kwargs,
+    )
+    assert valid_result == "valid"
+    assert valid_reason is None
+
     yield (
         "messages",
         "meta",
@@ -180,7 +210,13 @@ def test_gossip_beacon_attestation__reject_committee_index_out_of_range(spec, st
                 "message": get_filename(attestation),
                 "expected": "reject",
                 "reason": reason,
-            }
+            },
+            {
+                "subnet_id": int(correct_subnet),
+                "offset_ms": 500,
+                "message": get_filename(valid_attestation),
+                "expected": "valid",
+            },
         ],
     )
 
@@ -205,7 +241,13 @@ def test_gossip_beacon_attestation__reject_wrong_subnet(spec, state):
 
     next_slot(spec, state)
 
-    attestation = get_valid_attestation(spec, state, signed=True, beacon_block_root=anchor_root)
+    attestation = get_valid_attestation(
+        spec,
+        state,
+        signed=True,
+        beacon_block_root=anchor_root,
+        filter_participant_set=lambda participants: {min(participants)},
+    )
     if is_post_electra(spec):
         attestation = to_single_attestation(spec, state, attestation)
 
@@ -233,6 +275,18 @@ def test_gossip_beacon_attestation__reject_wrong_subnet(spec, state):
     assert result == "reject"
     assert reason == "attestation is for wrong subnet"
 
+    valid_result, valid_reason = run_validate_gossip(
+        spec,
+        seen=seen,
+        store=store,
+        attestation=attestation,
+        current_time_ms=block_time_ms + 500,
+        subnet_id=correct_subnet,
+        **kwargs,
+    )
+    assert valid_result == "valid"
+    assert valid_reason is None
+
     yield (
         "messages",
         "meta",
@@ -243,7 +297,13 @@ def test_gossip_beacon_attestation__reject_wrong_subnet(spec, state):
                 "message": get_filename(attestation),
                 "expected": "reject",
                 "reason": reason,
-            }
+            },
+            {
+                "subnet_id": int(correct_subnet),
+                "offset_ms": 500,
+                "message": get_filename(attestation),
+                "expected": "valid",
+            },
         ],
     )
 
@@ -1130,6 +1190,49 @@ def test_gossip_beacon_attestation__reject_target_not_ancestor(spec, state):
             }
         ],
     )
+
+
+@with_all_phases_from_to(PHASE0, FULU)
+@spec_state_test
+def test_gossip_beacon_attestation__ignore_finalized_fork(spec, state):
+    yield "topic", "meta", "beacon_attestation"
+    store, state, fork_root = yield from setup_store_with_finalized_fork(spec, state)
+    current_time_ms = spec.compute_time_at_slot_ms(store, state.slot) + 500
+    yield "current_time_ms", "meta", int(current_time_ms)
+    seen = get_seen(spec)
+    messages = []
+    for block_root, expected in ((fork_root, "ignore"), (None, "valid")):
+        attestation = get_valid_attestation(
+            spec,
+            state,
+            signed=True,
+            beacon_block_root=block_root,
+            filter_participant_set=lambda participants: {min(participants)},
+        )
+        if is_post_electra(spec):
+            attestation = to_single_attestation(spec, state, attestation)
+        yield get_filename(attestation), attestation
+        subnet = get_correct_subnet_for_attestation(spec, state, attestation)
+        result, reason = run_validate_gossip(
+            spec,
+            seen=seen,
+            store=store,
+            attestation=attestation,
+            current_time_ms=current_time_ms,
+            subnet_id=subnet,
+        )
+        assert result == expected
+        if expected == "ignore":
+            assert reason == "finalized checkpoint is not an ancestor of block"
+        messages.append(
+            {
+                "message": get_filename(attestation),
+                "subnet_id": int(subnet),
+                "expected": result,
+                "reason": reason,
+            }
+        )
+    yield "messages", "meta", messages
 
 
 @with_all_phases

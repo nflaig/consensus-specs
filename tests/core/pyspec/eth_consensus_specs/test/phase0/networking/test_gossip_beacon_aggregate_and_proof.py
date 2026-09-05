@@ -18,6 +18,7 @@ from eth_consensus_specs.test.helpers.block import (
 )
 from eth_consensus_specs.test.helpers.constants import (
     DENEB,
+    FULU,
     MAINNET,
     PHASE0,
 )
@@ -30,6 +31,7 @@ from eth_consensus_specs.test.helpers.gossip import (
     get_seen,
     run_validate_gossip,
     setup_store_with_failed_block,
+    setup_store_with_finalized_fork,
     wrap_genesis_block,
 )
 from eth_consensus_specs.test.helpers.keys import privkeys
@@ -1452,6 +1454,33 @@ def test_gossip_beacon_aggregate_and_proof__reject_target_not_ancestor(spec, sta
             }
         ],
     )
+
+
+@with_all_phases_from_to(PHASE0, FULU)
+@spec_state_test
+def test_gossip_beacon_aggregate_and_proof__ignore_finalized_fork(spec, state):
+    yield "topic", "meta", "beacon_aggregate_and_proof"
+    store, state, fork_root = yield from setup_store_with_finalized_fork(spec, state)
+    current_time_ms = spec.compute_time_at_slot_ms(store, state.slot) + 500
+    yield "current_time_ms", "meta", int(current_time_ms)
+    seen = get_seen(spec)
+    messages = []
+    for block_root, expected in ((fork_root, "ignore"), (None, "valid")):
+        attestation = get_valid_attestation(spec, state, signed=True, beacon_block_root=block_root)
+        aggregate = create_signed_aggregate_and_proof(spec, state, attestation)
+        yield get_filename(aggregate), aggregate
+        result, reason = run_validate_gossip(
+            spec,
+            seen=seen,
+            store=store,
+            signed_aggregate_and_proof=aggregate,
+            current_time_ms=current_time_ms,
+        )
+        assert result == expected
+        if expected == "ignore":
+            assert reason == "finalized checkpoint is not an ancestor of block"
+        messages.append({"message": get_filename(aggregate), "expected": result, "reason": reason})
+    yield "messages", "meta", messages
 
 
 @with_all_phases
