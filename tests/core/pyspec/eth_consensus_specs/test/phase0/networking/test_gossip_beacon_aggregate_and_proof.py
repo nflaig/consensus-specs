@@ -18,6 +18,7 @@ from eth_consensus_specs.test.helpers.block import (
 )
 from eth_consensus_specs.test.helpers.constants import (
     DENEB,
+    FULU,
     MAINNET,
     PHASE0,
 )
@@ -29,6 +30,8 @@ from eth_consensus_specs.test.helpers.gossip import (
     get_filename,
     get_seen,
     run_validate_gossip,
+    setup_store_with_failed_block,
+    setup_store_with_finalized_fork,
     wrap_genesis_block,
 )
 from eth_consensus_specs.test.helpers.keys import privkeys
@@ -1339,21 +1342,10 @@ def test_gossip_beacon_aggregate_and_proof__reject_block_failed_validation(spec,
     yield "state", anchor_state
 
     seen = get_seen(spec)
-    store, anchor_block = get_genesis_forkchoice_store_and_block(spec, state)
-    signed_anchor = wrap_genesis_block(spec, anchor_block)
+    store, signed_anchor, signed_block = setup_store_with_failed_block(spec, state)
 
     yield get_filename(signed_anchor), signed_anchor
-
-    next_slot(spec, state)
-
-    # Build and apply a block
-    block = build_empty_block_for_next_slot(spec, state)
-    signed_block = state_transition_and_sign_block(spec, state, block)
-
     yield get_filename(signed_block), signed_block
-
-    # Add block to store.blocks but NOT to store.block_states (simulating failed validation)
-    store.blocks[signed_block.message.hash_tree_root()] = signed_block.message
 
     yield (
         "blocks",
@@ -1364,7 +1356,9 @@ def test_gossip_beacon_aggregate_and_proof__reject_block_failed_validation(spec,
         ],
     )
 
-    attestation = get_valid_attestation(spec, state, signed=True)
+    attestation = get_valid_attestation(
+        spec, state, signed=True, beacon_block_root=signed_block.message.hash_tree_root()
+    )
     signed_agg = create_signed_aggregate_and_proof(spec, state, attestation)
 
     yield get_filename(signed_agg), signed_agg
@@ -1460,6 +1454,33 @@ def test_gossip_beacon_aggregate_and_proof__reject_target_not_ancestor(spec, sta
             }
         ],
     )
+
+
+@with_all_phases_from_to(PHASE0, FULU)
+@spec_state_test
+def test_gossip_beacon_aggregate_and_proof__ignore_finalized_fork(spec, state):
+    yield "topic", "meta", "beacon_aggregate_and_proof"
+    store, state, fork_root = yield from setup_store_with_finalized_fork(spec, state)
+    current_time_ms = spec.compute_time_at_slot_ms(store, state.slot) + 500
+    yield "current_time_ms", "meta", int(current_time_ms)
+    seen = get_seen(spec)
+    messages = []
+    for block_root, expected in ((fork_root, "ignore"), (None, "valid")):
+        attestation = get_valid_attestation(spec, state, signed=True, beacon_block_root=block_root)
+        aggregate = create_signed_aggregate_and_proof(spec, state, attestation)
+        yield get_filename(aggregate), aggregate
+        result, reason = run_validate_gossip(
+            spec,
+            seen=seen,
+            store=store,
+            signed_aggregate_and_proof=aggregate,
+            current_time_ms=current_time_ms,
+        )
+        assert result == expected
+        if expected == "ignore":
+            assert reason == "finalized checkpoint is not an ancestor of block"
+        messages.append({"message": get_filename(aggregate), "expected": result, "reason": reason})
+    yield "messages", "meta", messages
 
 
 @with_all_phases
