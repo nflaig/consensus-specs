@@ -890,6 +890,10 @@ def validate_payload_attestation_message_gossip(
     if not is_current_slot(store, data.slot, current_time_ms):
         raise GossipIgnore("payload attestation is not for the current slot")
 
+    # [REJECT] The payload attestation's slot is at or after the Gloas fork
+    if compute_epoch_at_slot(data.slot) < GLOAS_FORK_EPOCH:
+        raise GossipReject("payload attestation's slot is pre-gloas")
+
     # [IGNORE] The payload attestation's block has been seen (via gossip or non-gossip sources)
     # (MAY be queued until block is retrieved)
     if data.beacon_block_root not in store.blocks:
