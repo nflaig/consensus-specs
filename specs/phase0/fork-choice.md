@@ -19,6 +19,7 @@
     - [`compute_slots_since_epoch_start`](#compute_slots_since_epoch_start)
     - [`get_ancestor`](#get_ancestor)
     - [`is_ancestor`](#is_ancestor)
+    - [`get_committee_weight`](#get_committee_weight)
     - [`calculate_committee_fraction`](#calculate_committee_fraction)
     - [`get_checkpoint_block`](#get_checkpoint_block)
     - [`get_supported_node`](#get_supported_node)
@@ -294,12 +295,27 @@ def is_ancestor(store: Store, node: ForkChoiceNode, ancestor: ForkChoiceNode) ->
     return get_ancestor(store, node, store.blocks[ancestor.root].slot) == ancestor
 ```
 
+#### `get_committee_weight`
+
+```python
+def get_committee_weight(state: BeaconState) -> Gwei:
+    """
+    Return the weight of a single committee that can count towards fork choice.
+    Slashed validators are excluded, as in ``get_attestation_score``.
+    """
+    unslashed_and_active_indices = [
+        i
+        for i in get_active_validator_indices(state, get_current_epoch(state))
+        if not state.validators[i].slashed
+    ]
+    return get_total_balance(state, set(unslashed_and_active_indices)) // Uint64(SLOTS_PER_EPOCH)
+```
+
 #### `calculate_committee_fraction`
 
 ```python
 def calculate_committee_fraction(state: BeaconState, committee_percent: Uint64) -> Gwei:
-    committee_weight = get_total_active_balance(state) // Uint64(SLOTS_PER_EPOCH)
-    return (committee_weight * committee_percent) // 100
+    return (get_committee_weight(state) * committee_percent) // 100
 ```
 
 #### `get_checkpoint_block`
@@ -353,8 +369,7 @@ def get_attestation_score(store: Store, node: ForkChoiceNode, state: BeaconState
 
 ```python
 def compute_proposer_score(state: BeaconState) -> Gwei:
-    committee_weight = get_total_active_balance(state) // Uint64(SLOTS_PER_EPOCH)
-    return (committee_weight * PROPOSER_SCORE_BOOST) // 100
+    return (get_committee_weight(state) * PROPOSER_SCORE_BOOST) // 100
 ```
 
 #### `get_proposer_score`

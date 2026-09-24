@@ -343,6 +343,84 @@ def test_proposer_boost_correct_head(spec, state):
 
 @with_altair_and_later
 @spec_state_test
+def test_proposer_boost_excludes_slashed_validators(spec, state):
+    """
+    Active slashed validators in the justified state do not count towards the committee
+    weight the proposer boost is derived from. block_2 has attestation weight between
+    the boost with and without them and stays the head over the boosted block_1.
+    """
+    test_steps = []
+    block_2_slot = spec.Slot(3)
+    block_1_slot = spec.Slot(4)
+
+    # Slashed validators can neither propose nor attest to block_2
+    excluded = set()
+    for slot in (block_2_slot, block_1_slot):
+        proposer_state = state.copy()
+        next_slots(spec, proposer_state, slot)
+        excluded.add(spec.get_beacon_proposer_index(proposer_state))
+    excluded |= set(spec.get_beacon_committee(state, block_2_slot, spec.CommitteeIndex(0)))
+
+    boost_with_slashed = (
+        spec.get_total_active_balance(state)
+        // spec.Uint64(spec.SLOTS_PER_EPOCH)
+        * spec.config.PROPOSER_SCORE_BOOST
+        // 100
+    )
+    to_slash = [i for i in range(len(state.validators)) if i not in excluded]
+    for index in to_slash[: spec.SLOTS_PER_EPOCH]:
+        spec.slash_validator(state, spec.ValidatorIndex(index))
+    assert spec.is_active_validator(state.validators[to_slash[0]], spec.get_current_epoch(state))
+    genesis_state = state.copy()
+
+    # Initialization
+    store, anchor_block = get_genesis_forkchoice_store_and_block(spec, state)
+    yield "anchor_state", state
+    yield "anchor_block", anchor_block
+    boost = spec.get_proposer_score(store)
+    assert boost < boost_with_slashed
+
+    # block_2 is the head once attested
+    state_2 = genesis_state.copy()
+    next_slots(spec, state_2, block_2_slot - 1)
+    block_2 = build_empty_block_for_next_slot(spec, state_2)
+    signed_block_2 = state_transition_and_sign_block(spec, state_2, block_2)
+
+    effective_balance = state.validators[0].effective_balance
+    participant_count = boost // effective_balance + 1
+    attestation = get_valid_attestation(
+        spec,
+        state_2,
+        slot=block_2_slot,
+        signed=True,
+        filter_participant_set=lambda participants: sorted(participants)[:participant_count],
+    )
+    attesting_weight = spec.get_set_bit_count(attestation.aggregation_bits) * effective_balance
+    assert boost < attesting_weight < boost_with_slashed
+
+    # block_1 only receives the proposer boost
+    state_1 = genesis_state.copy()
+    next_slots(spec, state_1, block_1_slot - 1)
+    block_1 = build_empty_block_for_next_slot(spec, state_1)
+    signed_block_1 = state_transition_and_sign_block(spec, state_1, block_1)
+
+    time_ms = spec.compute_time_at_slot_ms(store.genesis_time_ms, block_1_slot)
+    on_tick_and_append_step(spec, store, time_ms, test_steps)
+    yield from add_block(spec, store, signed_block_2, test_steps)
+    yield from add_attestation(spec, store, attestation, test_steps)
+    check_head_against_root(spec, store, spec.hash_tree_root(block_2))
+
+    # Timely block_1 gets the boost but it is below block_2's attestation weight
+    yield from add_block(spec, store, signed_block_1, test_steps)
+    assert store.proposer_boost_root == spec.hash_tree_root(block_1)
+    check_head_against_root(spec, store, spec.hash_tree_root(block_2))
+    output_head_check(spec, store, test_steps)
+
+    yield "steps", test_steps
+
+
+@with_altair_and_later
+@spec_state_test
 def test_discard_equivocations_on_attester_slashing(spec, state):
     test_steps = []
     genesis_state = state.copy()
