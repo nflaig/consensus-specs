@@ -26,6 +26,7 @@ from eth_consensus_specs.test.helpers.gossip import (
     PAYLOAD_STATUS_NOT_VALIDATED,
     PAYLOAD_STATUS_VALID,
     run_validate_gossip,
+    setup_store_with_failed_block,
     wrap_genesis_block,
 )
 from eth_consensus_specs.test.helpers.state import (
@@ -200,18 +201,11 @@ def test_gossip_beacon_block__reject_parent_consensus_failed_execution_not_verif
     yield "state", anchor_state
 
     seen = get_seen(spec)
-    store, anchor_block = get_genesis_forkchoice_store_and_block(spec, state)
-    signed_anchor = wrap_genesis_block(spec, anchor_block)
+    store, signed_anchor, signed_block = setup_store_with_failed_block(spec, state)
 
     yield get_filename(signed_anchor), signed_anchor
-
-    block = build_empty_block_for_next_slot(spec, state)
-    signed_block = state_transition_and_sign_block(spec, state, block)
-
     yield get_filename(signed_block), signed_block
 
-    # Add to store.blocks but NOT store.block_states (simulating failed consensus validation)
-    store.blocks[signed_block.message.hash_tree_root()] = signed_block.message
     # Parent payload status is NOT_VALIDATED, i.e. execution is not yet validated.
 
     yield (
@@ -290,20 +284,14 @@ def test_gossip_beacon_block__ignore_parent_consensus_failed_execution_known(spe
     yield "state", anchor_state
 
     seen = get_seen(spec)
-    store, anchor_block = get_genesis_forkchoice_store_and_block(spec, state)
-    signed_anchor = wrap_genesis_block(spec, anchor_block)
+    store, signed_anchor, signed_block = setup_store_with_failed_block(spec, state)
 
     yield get_filename(signed_anchor), signed_anchor
-
-    block = build_empty_block_for_next_slot(spec, state)
-    signed_block = state_transition_and_sign_block(spec, state, block)
-
     yield get_filename(signed_block), signed_block
 
     parent_root = signed_block.message.hash_tree_root()
 
     # Parent has a known execution status but failed consensus validation.
-    store.blocks[parent_root] = signed_block.message
     block_payload_statuses = {parent_root: PAYLOAD_STATUS_VALID}
 
     yield (

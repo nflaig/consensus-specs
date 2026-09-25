@@ -24,6 +24,7 @@ from eth_consensus_specs.test.helpers.gossip import (
     get_filename,
     get_seen,
     run_validate_gossip,
+    setup_store_with_failed_block,
     wrap_genesis_block,
 )
 from eth_consensus_specs.test.helpers.state import (
@@ -429,20 +430,13 @@ def test_gossip_beacon_block__reject_parent_failed_validation(spec, state):
     yield "state", anchor_state
 
     seen = get_seen(spec)
-    store, anchor_block = get_genesis_forkchoice_store_and_block(spec, state)
-    signed_anchor = wrap_genesis_block(spec, anchor_block)
-
-    yield get_filename(signed_anchor), signed_anchor
-
     block = build_empty_block_for_next_slot(spec, state)
     if is_post_bellatrix(spec):
         block.body.execution_payload = spec.ExecutionPayload()
-    signed_block = state_transition_and_sign_block(spec, state, block)
+    store, signed_anchor, signed_block = setup_store_with_failed_block(spec, state, block)
 
+    yield get_filename(signed_anchor), signed_anchor
     yield get_filename(signed_block), signed_block
-
-    # Add block to store.blocks but NOT to store.block_states (simulating failed validation)
-    store.blocks[signed_block.message.hash_tree_root()] = signed_block.message
 
     yield (
         "blocks",
@@ -534,6 +528,7 @@ def test_gossip_beacon_block__reject_slot_not_higher_than_parent(spec, state):
     # Add parent to store
     store.blocks[signed_parent.message.hash_tree_root()] = signed_parent.message
     store.block_states[signed_parent.message.hash_tree_root()] = state.copy()
+    seen.proposer_slots.add((signed_parent.message.slot, signed_parent.message.proposer_index))
 
     yield (
         "blocks",
@@ -546,6 +541,8 @@ def test_gossip_beacon_block__reject_slot_not_higher_than_parent(spec, state):
 
     # Now build a block that claims the parent but has same slot (not higher)
     block = build_empty_block(spec, state, slot=signed_parent.message.slot)
+    # A different proposer avoids IGNORE for the parent block's already seen proposer/slot.
+    block.proposer_index = (block.proposer_index + 1) % len(state.validators)
     signed_block = sign_block(spec, state, block, proposer_index=block.proposer_index)
 
     yield get_filename(signed_block), signed_block
