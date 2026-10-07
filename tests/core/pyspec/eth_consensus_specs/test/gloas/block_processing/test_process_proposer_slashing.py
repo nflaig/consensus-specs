@@ -1,11 +1,16 @@
 from random import Random
 
 from eth_consensus_specs.test.context import (
+    always_bls,
     spec_state_test,
     with_gloas_and_later,
 )
+from eth_consensus_specs.test.helpers.attester_slashings import (
+    get_valid_attester_slashing_by_indices,
+)
 from eth_consensus_specs.test.helpers.proposer_slashings import (
     assert_process_proposer_slashing,
+    get_valid_proposer_slashing,
     prepare_process_proposer_slashing,
     run_proposer_slashing_processing,
 )
@@ -475,3 +480,208 @@ def test_builder_payment_not_deleted_foreign_equivocation(spec, state):
         pre_state,
         proposer_slashing,
     )
+
+
+def _prepare_pending_payment(spec, state, previous_epoch=False, **kwargs):
+    proposer_slashing, proposer_index = prepare_process_proposer_slashing(
+        spec,
+        state,
+        advance_epochs=2,
+        slot_offset=-spec.SLOTS_PER_EPOCH if previous_epoch else 0,
+        parent_root_2=b"\x99" * 32,
+        builder_payment_amount=spec.MIN_ACTIVATION_BALANCE,
+        **kwargs,
+    )
+    slot = proposer_slashing.signed_header_1.message.slot
+    payment_index = slot % spec.SLOTS_PER_EPOCH
+    if not previous_epoch:
+        payment_index += spec.SLOTS_PER_EPOCH
+    assert state.builder_pending_payments[payment_index].withdrawal.amount > 0
+    return proposer_slashing, proposer_index, payment_index
+
+
+def _run_cancellation_after_slashing(spec, state, previous_epoch=False, attester=True):
+    proposer_slashing, proposer_index, payment_index = _prepare_pending_payment(
+        spec, state, previous_epoch=previous_epoch
+    )
+    if attester:
+        attester_slashing = get_valid_attester_slashing_by_indices(
+            spec, state, [proposer_index], signed_1=True, signed_2=True
+        )
+        spec.process_attester_slashing(state, attester_slashing)
+    else:
+        earlier_slashing = get_valid_proposer_slashing(
+            spec,
+            state,
+            slashed_index=proposer_index,
+            slot=state.slot - 1,
+            signed_1=True,
+            signed_2=True,
+        )
+        spec.process_proposer_slashing(state, earlier_slashing)
+
+    assert state.validators[proposer_index].slashed
+    assert state.builder_pending_payments[payment_index].withdrawal.amount > 0
+    expected_state = state.copy()
+    expected_state.builder_pending_payments[payment_index] = spec.BuilderPendingPayment.empty()
+
+    yield from run_proposer_slashing_processing(spec, state, proposer_slashing)
+
+    # Cancellation must not apply another penalty, reward, or exit update.
+    assert state == expected_state
+
+
+@with_gloas_and_later
+@spec_state_test
+@always_bls
+def test_builder_payment_cancellation_after_attester_slashing_current_epoch(spec, state):
+    yield from _run_cancellation_after_slashing(spec, state)
+
+
+@with_gloas_and_later
+@spec_state_test
+@always_bls
+def test_builder_payment_cancellation_after_attester_slashing_previous_epoch(spec, state):
+    yield from _run_cancellation_after_slashing(spec, state, previous_epoch=True)
+
+
+@with_gloas_and_later
+@spec_state_test
+@always_bls
+def test_builder_payment_cancellation_after_proposer_slashing_current_epoch(spec, state):
+    yield from _run_cancellation_after_slashing(spec, state, attester=False)
+
+
+@with_gloas_and_later
+@spec_state_test
+@always_bls
+def test_builder_payment_cancellation_after_proposer_slashing_previous_epoch(spec, state):
+    yield from _run_cancellation_after_slashing(spec, state, previous_epoch=True, attester=False)
+
+
+def _run_invalid_cancellation(spec, state, proposer_slashing):
+    pre_state = state.copy()
+    yield from run_proposer_slashing_processing(spec, state, proposer_slashing, valid=False)
+    assert state == pre_state
+
+
+@with_gloas_and_later
+@spec_state_test
+@always_bls
+def test_builder_payment_cancellation_invalid_signature_1(spec, state):
+    proposer_slashing, _, _ = _prepare_pending_payment(
+        spec, state, proposer_slashed=True, signed_1=False
+    )
+    yield from _run_invalid_cancellation(spec, state, proposer_slashing)
+
+
+@with_gloas_and_later
+@spec_state_test
+@always_bls
+def test_builder_payment_cancellation_invalid_signature_2(spec, state):
+    proposer_slashing, _, _ = _prepare_pending_payment(
+        spec, state, proposer_slashed=True, signed_2=False
+    )
+    yield from _run_invalid_cancellation(spec, state, proposer_slashing)
+
+
+@with_gloas_and_later
+@spec_state_test
+def test_builder_payment_cancellation_foreign_proposer(spec, state):
+    proposer_slashing, proposer_index, payment_index = _prepare_pending_payment(
+        spec, state, proposer_slashed=True
+    )
+    state.builder_pending_payments[payment_index].proposer_index = (proposer_index + 1) % len(
+        state.validators
+    )
+    yield from _run_invalid_cancellation(spec, state, proposer_slashing)
+
+
+@with_gloas_and_later
+@spec_state_test
+def test_builder_payment_cancellation_zero_amount(spec, state):
+    proposer_slashing, _, payment_index = _prepare_pending_payment(
+        spec, state, proposer_index=0, proposer_slashed=True
+    )
+    # A non-default entry with no payment must not make a proof useful.
+    state.builder_pending_payments[payment_index].withdrawal.amount = 0
+    state.builder_pending_payments[payment_index].weight = 1000
+    yield from _run_invalid_cancellation(spec, state, proposer_slashing)
+
+
+@with_gloas_and_later
+@spec_state_test
+def test_builder_payment_cancellation_outside_window(spec, state):
+    _, proposer_index, _ = _prepare_pending_payment(spec, state, proposer_slashed=True)
+    # The old slot aliases a live payment's offset, but must not clear it.
+    proposer_slashing = get_valid_proposer_slashing(
+        spec,
+        state,
+        slashed_index=proposer_index,
+        slot=state.slot - 2 * spec.SLOTS_PER_EPOCH,
+        signed_1=True,
+        signed_2=True,
+    )
+    yield from _run_invalid_cancellation(spec, state, proposer_slashing)
+
+
+@with_gloas_and_later
+@spec_state_test
+def test_builder_payment_cancellation_already_settled(spec, state):
+    proposer_slashing, _, payment_index = _prepare_pending_payment(
+        spec, state, proposer_slashed=True
+    )
+    spec.settle_builder_payment(state, payment_index)
+    assert len(state.builder_pending_withdrawals) == 1
+    yield from _run_invalid_cancellation(spec, state, proposer_slashing)
+
+
+@with_gloas_and_later
+@spec_state_test
+def test_builder_payment_cancellation_duplicate(spec, state):
+    proposer_slashing, _, _ = _prepare_pending_payment(spec, state, proposer_slashed=True)
+    spec.process_proposer_slashing(state, proposer_slashing)
+    yield from _run_invalid_cancellation(spec, state, proposer_slashing)
+
+
+@with_gloas_and_later
+@spec_state_test
+def test_builder_payment_cancellation_mismatched_slots(spec, state):
+    proposer_slashing, _, _ = _prepare_pending_payment(spec, state, proposer_slashed=True)
+    proposer_slashing.signed_header_2.message.slot += 1
+    yield from _run_invalid_cancellation(spec, state, proposer_slashing)
+
+
+@with_gloas_and_later
+@spec_state_test
+def test_builder_payment_cancellation_mismatched_proposers(spec, state):
+    proposer_slashing, _, _ = _prepare_pending_payment(spec, state, proposer_slashed=True)
+    proposer_slashing.signed_header_2.message.proposer_index -= 1
+    yield from _run_invalid_cancellation(spec, state, proposer_slashing)
+
+
+@with_gloas_and_later
+@spec_state_test
+def test_builder_payment_cancellation_identical_headers(spec, state):
+    proposer_slashing, _, _ = _prepare_pending_payment(spec, state, proposer_slashed=True)
+    proposer_slashing.signed_header_2 = proposer_slashing.signed_header_1.copy()
+    yield from _run_invalid_cancellation(spec, state, proposer_slashing)
+
+
+@with_gloas_and_later
+@spec_state_test
+def test_builder_payment_cancellation_prevents_quorum_settlement(spec, state):
+    proposer_slashing, _, payment_index = _prepare_pending_payment(
+        spec, state, previous_epoch=True, proposer_slashed=True
+    )
+    state.builder_pending_payments[
+        payment_index
+    ].weight = spec.get_builder_payment_quorum_threshold(state)
+    control = state.copy()
+    spec.process_builder_pending_payments(control)
+    assert len(control.builder_pending_withdrawals) == 1
+
+    yield from run_proposer_slashing_processing(spec, state, proposer_slashing)
+    settled_state = state.copy()
+    spec.process_builder_pending_payments(settled_state)
+    assert len(settled_state.builder_pending_withdrawals) == 0

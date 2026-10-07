@@ -35,6 +35,7 @@
     - [Global topics](#global-topics)
       - [Modified `beacon_block`](#modified-beacon_block)
       - [Modified `beacon_aggregate_and_proof`](#modified-beacon_aggregate_and_proof)
+      - [Modified `proposer_slashing`](#modified-proposer_slashing)
       - [New `execution_payload`](#new-execution_payload)
       - [New `payload_attestation_message`](#new-payload_attestation_message)
       - [New `execution_payload_bid`](#new-execution_payload_bid)
@@ -194,6 +195,8 @@ class Seen:
     aggregate_data_roots: dict[tuple[Root, CommitteeIndex], set[tuple[bool, ...]]]
     voluntary_exit_indices: set[ValidatorIndex]
     proposer_slashing_indices: set[ValidatorIndex]
+    # [New in Gloas:EIP7732]
+    proposer_payment_cancellations: set[tuple[Slot, ValidatorIndex]]
     attester_slashing_indices: set[ValidatorIndex]
     attestation_validator_epochs: set[tuple[Epoch, ValidatorIndex]]
     sync_contribution_aggregator_slots: set[tuple[Slot, ValidatorIndex, Uint64]]
@@ -786,6 +789,80 @@ def validate_beacon_aggregate_and_proof_gossip(
     if aggregate_cache_key not in seen.aggregate_data_roots:
         seen.aggregate_data_roots[aggregate_cache_key] = set()
     seen.aggregate_data_roots[aggregate_cache_key].add(aggregate_bits)
+```
+
+##### Modified `proposer_slashing`
+
+Proposer equivocation evidence can cancel a matching pending builder payment
+even when the validator has already been slashed. Such evidence should be
+retained in operation pools while the payment remains cancellable. Gossip
+deduplicates cancellation proofs by proposal, while retaining validator-level
+deduplication for other proposer slashings. Entries in
+`proposer_payment_cancellations` may be pruned once their slots leave the
+two-epoch payment window.
+
+```python
+def validate_proposer_slashing_gossip(
+    seen: Seen,
+    store: Store,
+    proposer_slashing: ProposerSlashing,
+) -> None:
+    """
+    Validate a ProposerSlashing for gossip propagation.
+    Raises GossipIgnore or GossipReject on validation failure.
+    """
+    header_1 = proposer_slashing.signed_header_1.message
+    header_2 = proposer_slashing.signed_header_2.message
+    proposer_index = header_1.proposer_index
+
+    # [Modified in Gloas:EIP7732]
+    state = store.block_states[get_head(store).root]
+    payment_index = get_cancellable_builder_payment_index(state, header_1.slot, proposer_index)
+    proposal = (header_1.slot, proposer_index)
+    # [IGNORE] The slashing is the first valid proof received for this proposal
+    # when cancelling a payment, or for this validator otherwise
+    if payment_index is not None:
+        if proposal in seen.proposer_payment_cancellations:
+            raise GossipIgnore("already seen proposer slashing for this proposal")
+    elif proposer_index in seen.proposer_slashing_indices:
+        raise GossipIgnore("already seen proposer slashing for this proposer")
+
+    # [REJECT] The header slots match
+    if header_1.slot != header_2.slot:
+        raise GossipReject("header slots do not match")
+
+    # [REJECT] The header proposer indices match
+    if header_1.proposer_index != header_2.proposer_index:
+        raise GossipReject("header proposer indices do not match")
+
+    # [REJECT] The headers are different
+    if header_1 == header_2:
+        raise GossipReject("headers are not different")
+
+    # [REJECT] The proposer index is a valid validator index
+    if proposer_index >= len(state.validators):
+        raise GossipReject("proposer index out of range")
+
+    # [Modified in Gloas:EIP7732]
+    # [REJECT] The proposer is slashable or the proof can cancel a pending payment
+    proposer = state.validators[proposer_index]
+    if not is_slashable_validator(proposer, get_current_epoch(state)) and payment_index is None:
+        raise GossipReject("proposer is not slashable")
+
+    # [REJECT] The signatures are valid
+    for signed_header in (proposer_slashing.signed_header_1, proposer_slashing.signed_header_2):
+        domain = get_domain(
+            state, DOMAIN_BEACON_PROPOSER, compute_epoch_at_slot(signed_header.message.slot)
+        )
+        signing_root = compute_signing_root(signed_header.message, domain)
+        if not bls.Verify(proposer.pubkey, signing_root, signed_header.signature):
+            raise GossipReject("invalid proposer slashing signature")
+
+    # Mark this proposer slashing as seen
+    seen.proposer_slashing_indices.add(proposer_index)
+    # [New in Gloas:EIP7732]
+    if payment_index is not None:
+        seen.proposer_payment_cancellations.add(proposal)
 ```
 
 ##### New `execution_payload`

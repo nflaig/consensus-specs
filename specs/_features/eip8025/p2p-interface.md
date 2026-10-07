@@ -47,6 +47,7 @@ class Seen:
     aggregate_data_roots: dict[tuple[Root, CommitteeIndex], set[tuple[bool, ...]]]
     voluntary_exit_indices: set[ValidatorIndex]
     proposer_slashing_indices: set[ValidatorIndex]
+    proposer_payment_cancellations: set[tuple[Slot, ValidatorIndex]]
     attester_slashing_indices: set[ValidatorIndex]
     attestation_validator_epochs: set[tuple[Epoch, ValidatorIndex]]
     sync_contribution_aggregator_slots: set[tuple[Slot, ValidatorIndex, Uint64]]
