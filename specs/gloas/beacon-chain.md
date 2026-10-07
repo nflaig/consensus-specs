@@ -107,7 +107,6 @@
     - [Modified `get_attestation_participation_flag_indices`](#modified-get_attestation_participation_flag_indices)
     - [New `get_ptc`](#new-get_ptc)
     - [New `get_indexed_payload_attestation`](#new-get_indexed_payload_attestation)
-    - [New `get_cancellable_builder_payment_index`](#new-get_cancellable_builder_payment_index)
     - [New `get_builder_payment_quorum_threshold`](#new-get_builder_payment_quorum_threshold)
     - [New `get_activation_churn_limit`](#new-get_activation_churn_limit)
     - [New `get_exit_churn_limit`](#new-get_exit_churn_limit)
@@ -1426,29 +1425,6 @@ def get_indexed_payload_attestation(
     )
 ```
 
-#### New `get_cancellable_builder_payment_index`
-
-```python
-def get_cancellable_builder_payment_index(
-    state: BeaconState, slot: Slot, proposer_index: ValidatorIndex
-) -> Uint64 | None:
-    """
-    Return the pending payment index for this proposal, if it can be cancelled.
-    """
-    proposal_epoch = compute_epoch_at_slot(slot)
-    if proposal_epoch == get_current_epoch(state):
-        payment_index = SLOTS_PER_EPOCH + slot % SLOTS_PER_EPOCH
-    elif proposal_epoch == get_previous_epoch(state):
-        payment_index = slot % SLOTS_PER_EPOCH
-    else:
-        return None
-
-    payment = state.builder_pending_payments[payment_index]
-    if payment.withdrawal.amount > 0 and payment.proposer_index == proposer_index:
-        return payment_index
-    return None
-```
-
 #### New `get_builder_payment_quorum_threshold`
 
 ```python
@@ -2477,14 +2453,9 @@ def process_proposer_slashing(state: BeaconState, proposer_slashing: ProposerSla
     assert header_1.proposer_index == header_2.proposer_index
     # Verify the headers are different
     assert header_1 != header_2
-    proposer = state.validators[header_1.proposer_index]
     # [Modified in Gloas:EIP7732]
-    # The proof must slash the proposer or cancel a matching pending payment.
+    proposer = state.validators[header_1.proposer_index]
     slashable = is_slashable_validator(proposer, get_current_epoch(state))
-    payment_index = get_cancellable_builder_payment_index(
-        state, header_1.slot, header_1.proposer_index
-    )
-    assert slashable or payment_index is not None
     # Verify signatures
     for signed_header in (proposer_slashing.signed_header_1, proposer_slashing.signed_header_2):
         domain = get_domain(
@@ -2494,13 +2465,29 @@ def process_proposer_slashing(state: BeaconState, proposer_slashing: ProposerSla
         assert bls.Verify(proposer.pubkey, signing_root, signed_header.signature)
 
     # [New in Gloas:EIP7732]
-    # Cancel the matching pending payment even if the proposer was already
-    # slashed. Both signatures must be verified before clearing the payment.
-    if payment_index is not None:
-        state.builder_pending_payments[payment_index] = BuilderPendingPayment.empty()
+    # Remove the BuilderPendingPayment corresponding to this proposal if it is
+    # still in the 2-epoch window. Only clear it when the slashed validator is
+    # the proposer associated with the payment; otherwise an unrelated same-slot
+    # equivocation could grief an honest proposer's payment.
+    payment_cancelled = False
+    slot = header_1.slot
+    proposal_epoch = compute_epoch_at_slot(slot)
+    if proposal_epoch == get_current_epoch(state):
+        payment_index = SLOTS_PER_EPOCH + slot % SLOTS_PER_EPOCH
+        payment = state.builder_pending_payments[payment_index]
+        if payment.withdrawal.amount > 0 and payment.proposer_index == header_1.proposer_index:
+            state.builder_pending_payments[payment_index] = BuilderPendingPayment.empty()
+            payment_cancelled = True
+    elif proposal_epoch == get_previous_epoch(state):
+        payment_index = slot % SLOTS_PER_EPOCH
+        payment = state.builder_pending_payments[payment_index]
+        if payment.withdrawal.amount > 0 and payment.proposer_index == header_1.proposer_index:
+            state.builder_pending_payments[payment_index] = BuilderPendingPayment.empty()
+            payment_cancelled = True
 
     # [Modified in Gloas:EIP7732]
-    # Apply the penalty and whistleblower reward only once.
+    # Already-slashed proposers can still have a payment cancelled by the proof.
+    assert slashable or payment_cancelled
     if slashable:
         slash_validator(state, header_1.proposer_index)
 ```

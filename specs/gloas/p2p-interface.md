@@ -817,11 +817,21 @@ def validate_proposer_slashing_gossip(
 
     # [Modified in Gloas:EIP7732]
     state = store.block_states[get_head(store).root]
-    payment_index = get_cancellable_builder_payment_index(state, header_1.slot, proposer_index)
+    proposal_epoch = compute_epoch_at_slot(header_1.slot)
+    payment_index = None
+    if proposal_epoch == get_current_epoch(state):
+        payment_index = SLOTS_PER_EPOCH + header_1.slot % SLOTS_PER_EPOCH
+    elif proposal_epoch == get_previous_epoch(state):
+        payment_index = header_1.slot % SLOTS_PER_EPOCH
+    can_cancel_payment = (
+        payment_index is not None
+        and state.builder_pending_payments[payment_index].withdrawal.amount > 0
+        and state.builder_pending_payments[payment_index].proposer_index == proposer_index
+    )
     proposal = (header_1.slot, proposer_index)
     # [IGNORE] The slashing is the first valid proof received for this proposal
     # when cancelling a payment, or for this validator otherwise
-    if payment_index is not None:
+    if can_cancel_payment:
         if proposal in seen.proposer_payment_cancellations:
             raise GossipIgnore("already seen proposer slashing for this proposal")
     elif proposer_index in seen.proposer_slashing_indices:
@@ -846,7 +856,7 @@ def validate_proposer_slashing_gossip(
     # [Modified in Gloas:EIP7732]
     # [REJECT] The proposer is slashable or the proof can cancel a pending payment
     proposer = state.validators[proposer_index]
-    if not is_slashable_validator(proposer, get_current_epoch(state)) and payment_index is None:
+    if not is_slashable_validator(proposer, get_current_epoch(state)) and not can_cancel_payment:
         raise GossipReject("proposer is not slashable")
 
     # [REJECT] The signatures are valid
@@ -861,7 +871,7 @@ def validate_proposer_slashing_gossip(
     # Mark this proposer slashing as seen
     seen.proposer_slashing_indices.add(proposer_index)
     # [New in Gloas:EIP7732]
-    if payment_index is not None:
+    if can_cancel_payment:
         seen.proposer_payment_cancellations.add(proposal)
 ```
 
