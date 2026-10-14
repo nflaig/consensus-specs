@@ -11,8 +11,12 @@ from eth_consensus_specs.test.helpers.block import (
     build_empty_block_for_next_slot,
 )
 from eth_consensus_specs.test.helpers.constants import MINIMAL
+from eth_consensus_specs.test.helpers.execution_payload import (
+    build_signed_execution_payload_envelope,
+)
 from eth_consensus_specs.test.helpers.fork_choice import (
     add_block,
+    add_execution_payload,
     on_tick_and_append_step,
     output_store_checks,
     setup_finalized_store,
@@ -25,7 +29,9 @@ from eth_consensus_specs.test.helpers.state import (
 )
 
 
-def _setup_boost_scenario(spec, state, adjacent, weak, sibling):
+def _setup_boost_scenario(
+    spec, state, adjacent, weak, sibling, sibling_above=True, reveal_parent_payload=False
+):
     """
     Build a finalized store, a weak/strong re-org target `parent`, an optional
     same-slot same-proposer `sibling`, then a boosted `block` on that parent.
@@ -46,6 +52,11 @@ def _setup_boost_scenario(spec, state, adjacent, weak, sibling):
       - boost applied  -> parent gains get_proposer_score -> head == block
     This flips `get_head`, the field clients actually check (weights are not
     universally validated).
+
+    `sibling_above=False` orients the sibling BELOW the parent instead, so the parent
+    keeps winning the tiebreak and the head is decided inside the parent's subtree.
+    `reveal_parent_payload=True` adds the parent's execution payload envelope with no
+    PTC votes, so the parent is payload-verified but not payload-timely.
     """
     store, state, test_steps = yield from setup_finalized_store(spec, state)
 
@@ -60,19 +71,19 @@ def _setup_boost_scenario(spec, state, adjacent, weak, sibling):
     # --- same-slot same-proposer sibling (competitor, tuned to outrank on tiebreak) ---
     sibling_root = None
     if sibling is not None:
-        # Orient the sibling root above the parent root so it wins the fork-choice
-        # tiebreak on a weight tie. Graffiti only perturbs the block root; bounded
-        # so a helper change can never spin forever.
+        # Orient the sibling root above (or below) the parent root so the fork-choice
+        # tiebreak on a weight tie is deterministic. Graffiti only perturbs the block
+        # root; bounded so a helper change can never spin forever.
         for graffiti_seed in range(256):
             sibling_state = parent_pre_state.copy()
             sibling_block = build_empty_block(spec, sibling_state, slot=parent_block.slot)
             sibling_block.body.graffiti = spec.Bytes32(graffiti_seed.to_bytes(32, "little"))
             signed_sibling = state_transition_and_sign_block(spec, sibling_state, sibling_block)
             sibling_root = signed_sibling.message.hash_tree_root()
-            if sibling_root > parent_root:
+            if sibling_root != parent_root and (sibling_root > parent_root) == sibling_above:
                 break
         else:
-            raise AssertionError("could not orient sibling root above parent root")
+            raise AssertionError("could not orient sibling root relative to parent root")
         # Equivocation match depends on same proposer at the same slot; assert the
         # invariant so a future helper change cannot silently break discrimination.
         assert signed_sibling.message.proposer_index == signed_parent.message.proposer_index
@@ -89,6 +100,13 @@ def _setup_boost_scenario(spec, state, adjacent, weak, sibling):
             )
             on_tick_and_append_step(spec, store, late_time_ms, test_steps)
             yield from add_block(spec, store, signed_sibling, test_steps)
+
+    # --- reveal the parent's payload without PTC support (verified, not timely) ---
+    if reveal_parent_payload:
+        envelope = build_signed_execution_payload_envelope(spec, state, parent_root, signed_parent)
+        yield from add_execution_payload(spec, store, envelope, test_steps)
+        assert spec.is_payload_verified(store, parent_root)
+        assert not spec.payload_timeliness(store, parent_root, timely=True)
 
     # --- make the parent strong if the row requires weak == False ---
     # Attest the whole parent-slot committee to the parent so its weight exceeds
@@ -229,6 +247,40 @@ def test_should_apply_proposer_boost_withheld(spec, state):
     # Boost withheld -> weight tie broken by root -> head flips to the sibling
     assert spec.get_head(store).root == roots["sibling"]
     assert spec.get_head(store).root != roots["block"]
+
+    output_store_checks(spec, store, test_steps, with_viable_for_head_weights=True)
+    yield "steps", test_steps
+
+
+@with_gloas_and_later
+@with_presets([MINIMAL], reason="too slow")
+@spec_state_test
+def test_should_apply_proposer_boost_withheld_parent_payload_revealed(spec, state):
+    """
+    Boost WITHHELD as above, but the sibling sorts BELOW the parent so the parent
+    keeps the tiebreak, and the parent's payload was revealed without PTC support.
+    `should_extend_payload` reads `store.proposer_boost_root` regardless of
+    `should_apply_proposer_boost`: the boost root is the block, which extends the
+    parent's EMPTY variant, so EMPTY wins over FULL and the head is the block. A
+    client that drops the boost root together with the withheld boost weight falls
+    into the "no proposer boost root" branch, extends the parent's FULL variant and
+    fails this vector on the `head` check.
+    """
+    store, state, roots, test_steps = yield from _setup_boost_scenario(
+        spec,
+        state,
+        adjacent=True,
+        weak=True,
+        sibling="timely",
+        sibling_above=False,
+        reveal_parent_payload=True,
+    )
+
+    assert spec.should_apply_proposer_boost(store) is False
+    _assert_weight_reflects_boost(spec, store, roots["block"], boost_applied=False)
+    assert not spec.is_parent_node_full(store, store.blocks[roots["block"]])
+    assert spec.should_extend_payload(store, roots["parent"]) is False
+    assert spec.get_head(store).root == roots["block"]
 
     output_store_checks(spec, store, test_steps, with_viable_for_head_weights=True)
     yield "steps", test_steps
