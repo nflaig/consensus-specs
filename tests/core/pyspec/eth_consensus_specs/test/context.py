@@ -636,6 +636,19 @@ def _get_available_phases(run_phases, other_phases):
     return available_phases
 
 
+def _reset_inclusion_list_stores(phase_dir):
+    """
+    The inclusion list store is a cached singleton of each spec module, so every test case
+    starts from an empty one.
+    """
+    for spec in phase_dir.values():
+        cached_or_new_inclusion_list_store = getattr(
+            spec, "cached_or_new_inclusion_list_store", None
+        )
+        if cached_or_new_inclusion_list_store is not None:
+            cached_or_new_inclusion_list_store.cache_clear()
+
+
 def _run_test_case_with_phases(fn, phases, other_phases, kw, args, is_fork_transition=False):
     run_phases = _get_run_phases(phases, kw, other_phases=other_phases)
 
@@ -660,12 +673,14 @@ def _run_test_case_with_phases(fn, phases, other_phases, kw, args, is_fork_trans
         results: MultiPhaseResult = {}
 
         for phase in run_phases:
+            _reset_inclusion_list_stores(phase_dir)
             ret = fn(*args, spec=targets[phase], phases=phase_dir, **kw)
             results[phase] = ret
 
         return results
 
     for phase in run_phases:
+        _reset_inclusion_list_stores(phase_dir)
         ret = fn(*args, spec=targets[phase], phases=phase_dir, **kw)
 
     return ret

@@ -18,7 +18,6 @@ from eth_consensus_specs.test.helpers.gossip import (
 )
 from eth_consensus_specs.test.helpers.inclusion_list import (
     get_sample_signed_inclusion_list,
-    run_with_inclusion_list_store,
 )
 
 
@@ -107,20 +106,14 @@ def _run_bid_inclusion_list_bits_scenario(
     # bid's check reads the inclusion list store that on_inclusion_list
     # populates at the fork-choice layer, so record it there too.
     current_time_ms += 40
-    bid_result = bid_reason = None
-
-    def _record_and_validate_bid():
-        nonlocal bid_result, bid_reason
-        spec.process_inclusion_list(spec.get_inclusion_list_store(), signed_il, timely=True)
-        bid_result, bid_reason = run_validate_gossip(
-            spec,
-            seen=seen,
-            store=store,
-            signed_execution_payload_bid=signed_bid,
-            current_time_ms=current_time_ms,
-        )
-
-    run_with_inclusion_list_store(spec, _record_and_validate_bid)
+    spec.process_inclusion_list(spec.get_inclusion_list_store(), signed_il, timely=True)
+    bid_result, bid_reason = run_validate_gossip(
+        spec,
+        seen=seen,
+        store=store,
+        signed_execution_payload_bid=signed_bid,
+        current_time_ms=current_time_ms,
+    )
 
     assert bid_result == expected_result
     assert bid_reason == expected_reason

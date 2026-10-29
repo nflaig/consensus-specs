@@ -1,5 +1,3 @@
-from collections import defaultdict
-from functools import lru_cache
 from random import randbytes
 
 from eth_consensus_specs.test.helpers.keys import privkeys
@@ -121,26 +119,3 @@ def sign_inclusion_list(spec, state, inclusion_list):
     signature = spec.get_inclusion_list_signature(state, inclusion_list, privkey)
 
     return spec.SignedInclusionList(message=inclusion_list, signature=signature)
-
-
-def run_with_inclusion_list_store(spec, func):
-    """
-    This helper runs the given ``func`` with monkeypatched ``cached_or_new_inclusion_list_store``
-    that returns cached inclusion list store, or a new one if none exists.
-    """
-
-    @lru_cache(maxsize=1)
-    def cached_or_new_inclusion_list_store():
-        return spec.InclusionListStore(
-            inclusion_lists=defaultdict(dict),
-            equivocators=defaultdict(set),
-        )
-
-    cached_or_new_inclusion_list_store_backup = spec.cached_or_new_inclusion_list_store
-    spec.cached_or_new_inclusion_list_store = cached_or_new_inclusion_list_store
-
-    try:
-        func()
-    finally:
-        spec.cached_or_new_inclusion_list_store = cached_or_new_inclusion_list_store_backup
-        cached_or_new_inclusion_list_store.cache_clear()

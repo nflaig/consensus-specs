@@ -9,12 +9,15 @@ class HezeSpecBuilder(BaseSpecBuilder):
     @classmethod
     def imports(cls, preset_name: str):
         return f"""
+from functools import lru_cache
+
 from eth_consensus_specs.gloas import {preset_name} as gloas
 """
 
     @classmethod
     def sundry_functions(cls) -> str:
         return """
+@lru_cache(maxsize=1)
 def cached_or_new_inclusion_list_store() -> InclusionListStore:
     return InclusionListStore(
         inclusion_lists=defaultdict(dict),
