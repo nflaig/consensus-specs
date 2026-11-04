@@ -6,7 +6,9 @@ from eth_consensus_specs.test.helpers.epoch_processing import run_epoch_processi
 from eth_consensus_specs.test.helpers.state import next_epoch
 
 
-def create_builder_pending_payment(spec, builder_index, amount, weight=0, fee_recipient=None):
+def create_builder_pending_payment(
+    spec, builder_index, amount, weight=0, fee_recipient=None, proposer_index=0
+):
     """Create a BuilderPendingPayment for testing."""
     if fee_recipient is None:
         fee_recipient = spec.ExecutionAddress()
@@ -18,6 +20,7 @@ def create_builder_pending_payment(spec, builder_index, amount, weight=0, fee_re
             amount=amount,
             builder_index=builder_index,
         ),
+        proposer_index=proposer_index,
     )
 
 
@@ -278,3 +281,64 @@ def test_process_builder_pending_payments_queue_rotation(spec, state):
         assert payment.weight == 0
         assert payment.withdrawal.amount == 0
         assert payment.withdrawal.builder_index == 0
+
+
+@with_gloas_and_later
+@spec_state_test
+def test_process_builder_pending_payments_slashed_proposer_not_paid(spec, state):
+    """Test that a payment at quorum is skipped when its proposer has been slashed."""
+    next_epoch(spec, state)
+    next_epoch(spec, state)
+
+    builder_index = 0
+    proposer_index = 1
+    amount = spec.MIN_ACTIVATION_BALANCE
+    quorum = spec.get_builder_payment_quorum_threshold(state)
+    fee_recipient = b"\x44" * 20
+
+    state.validators[proposer_index].slashed = True
+    payment = create_builder_pending_payment(
+        spec, builder_index, amount, quorum, fee_recipient, proposer_index
+    )
+    state.builder_pending_payments[0] = payment
+
+    pre_builder_pending_withdrawals = len(state.builder_pending_withdrawals)
+
+    yield from run_epoch_processing_with(spec, state, "process_builder_pending_payments")
+
+    # No withdrawal is added, the payment is rotated out
+    assert len(state.builder_pending_withdrawals) == pre_builder_pending_withdrawals
+    assert state.builder_pending_payments[0].weight == 0
+
+
+@with_gloas_and_later
+@spec_state_test
+def test_process_builder_pending_payments_slashed_proposer_mixed(spec, state):
+    """Test that only the payments of unslashed proposers are paid at quorum."""
+    next_epoch(spec, state)
+    next_epoch(spec, state)
+
+    builder_index = 0
+    slashed_proposer_index = 1
+    proposer_index = 2
+    amount = spec.MIN_ACTIVATION_BALANCE
+    quorum = spec.get_builder_payment_quorum_threshold(state)
+
+    state.validators[slashed_proposer_index].slashed = True
+    state.builder_pending_payments[0] = create_builder_pending_payment(
+        spec, builder_index, amount, quorum, b"\x45" * 20, slashed_proposer_index
+    )
+    state.builder_pending_payments[1] = create_builder_pending_payment(
+        spec, builder_index, amount, quorum, b"\x46" * 20, proposer_index
+    )
+
+    pre_builder_pending_withdrawals = len(state.builder_pending_withdrawals)
+
+    yield from run_epoch_processing_with(spec, state, "process_builder_pending_payments")
+
+    assert len(state.builder_pending_withdrawals) == pre_builder_pending_withdrawals + 1
+    withdrawal = state.builder_pending_withdrawals[len(state.builder_pending_withdrawals) - 1]
+    assert withdrawal.fee_recipient == b"\x46" * 20
+    assert withdrawal.amount == amount
+    assert state.builder_pending_payments[0].weight == 0
+    assert state.builder_pending_payments[1].weight == 0
