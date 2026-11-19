@@ -1086,3 +1086,162 @@ def test_fork_topups_to_non_latest_builders(spec, phases, state):
         amount * 3,
     ]
     assert list(post_state.pending_deposits) == []
+
+
+@with_phases(phases=[FULU], other_phases=[GLOAS])
+@spec_test
+@with_state
+@with_meta_tags(GLOAS_FORK_TEST_META_TAGS)
+@always_bls
+def test_fork_builder_deposit_followed_by_bls_and_eth1_credentials(spec, phases, state):
+    """Valid 0x00 and 0x01 deposits for a builder's key stay pending instead of funding it."""
+    post_spec = phases[GLOAS]
+    amount = post_spec.MIN_DEPOSIT_AMOUNT
+    builder_pubkey = builder_pubkeys[0]
+    privkey = builder_pubkey_to_privkey[builder_pubkey]
+    builder_deposit = create_pending_deposit_for_builder(post_spec, builder_pubkey, amount)
+    non_builder_deposits = []
+    for prefix in (post_spec.BLS_WITHDRAWAL_PREFIX, post_spec.ETH1_ADDRESS_WITHDRAWAL_PREFIX):
+        deposit_data = build_deposit_data(
+            post_spec,
+            builder_pubkey,
+            privkey,
+            amount,
+            prefix + b"\x00" * 11 + b"\xab" * 20,
+            signed=True,
+        )
+        non_builder_deposits.append(
+            post_spec.PendingDeposit(
+                pubkey=deposit_data.pubkey,
+                withdrawal_credentials=deposit_data.withdrawal_credentials,
+                amount=deposit_data.amount,
+                signature=deposit_data.signature,
+                slot=post_spec.GENESIS_SLOT,
+            )
+        )
+    state.pending_deposits = spec.PendingDeposits(data=[builder_deposit] + non_builder_deposits)
+
+    post_state = yield from run_fork_test(post_spec, state)
+
+    assert len(post_state.builders) == 1
+    assert post_state.builders[0].balance == amount
+    assert list(post_state.pending_deposits) == non_builder_deposits
+
+
+@with_phases(phases=[FULU], other_phases=[GLOAS])
+@spec_test
+@with_state
+@with_meta_tags(GLOAS_FORK_TEST_META_TAGS)
+@always_bls
+def test_fork_invalid_topup_before_builder_and_validator_is_discarded(spec, phases, state):
+    """An invalid B0 deposit for an unknown key is discarded before the builder registers."""
+    yield from run_fork_topup_order_test(
+        spec, phases, state, ("topup", "builder", "validator"), ("validator",), 3
+    )
+
+
+@with_phases(phases=[FULU], other_phases=[GLOAS])
+@spec_test
+@with_state
+@with_meta_tags(GLOAS_FORK_TEST_META_TAGS)
+@always_bls
+def test_fork_builder_topup_before_pending_validator(spec, phases, state):
+    """An invalid B0 top-up funds the builder and a later validator deposit stays pending."""
+    yield from run_fork_topup_order_test(
+        spec, phases, state, ("builder", "topup", "validator"), ("validator",), 5
+    )
+
+
+@with_phases(phases=[FULU], other_phases=[GLOAS])
+@spec_test
+@with_state
+@with_meta_tags(GLOAS_FORK_TEST_META_TAGS)
+@always_bls
+def test_fork_builder_topup_after_pending_validator(spec, phases, state):
+    """An invalid B0 top-up funds the builder despite a validator deposit queued in between."""
+    yield from run_fork_topup_order_test(
+        spec, phases, state, ("builder", "validator", "topup"), ("validator",), 5
+    )
+
+
+@with_phases(phases=[FULU], other_phases=[GLOAS])
+@spec_test
+@with_state
+@with_meta_tags(GLOAS_FORK_TEST_META_TAGS)
+@always_bls
+def test_fork_invalid_builder_deposit_ignores_other_pubkey_validator_deposit(spec, phases, state):
+    """A pending validator deposit for another key cannot keep an invalid B0 deposit."""
+    post_spec = phases[GLOAS]
+    amount = post_spec.MIN_DEPOSIT_AMOUNT
+    validator_deposit = create_pending_deposit_for_unregistered_validator(
+        post_spec, builder_pubkeys[1], amount
+    )
+    invalid_builder_deposit = create_pending_deposit_for_builder(
+        post_spec, builder_pubkeys[0], amount, signed=False
+    )
+    state.pending_deposits = spec.PendingDeposits.of(validator_deposit, invalid_builder_deposit)
+
+    post_state = yield from run_fork_test(post_spec, state)
+
+    assert len(post_state.builders) == 0
+    assert list(post_state.pending_deposits) == [validator_deposit]
+
+
+@with_phases(phases=[FULU], other_phases=[GLOAS])
+@spec_test
+@with_state
+@with_meta_tags(GLOAS_FORK_TEST_META_TAGS)
+@always_bls
+def test_fork_valid_validator_deposit_between_invalid_builder_deposits(spec, phases, state):
+    """
+    Test fork with deposits for the same unregistered pubkey:
+    - Invalid validator deposit
+    - Invalid builder deposit, discarded as no valid validator deposit precedes it
+    - Valid validator deposit
+    - Invalid builder deposit, kept as the valid validator deposit precedes it
+    - Invalid validator deposit
+    - Invalid builder deposit, kept
+
+    A discarded invalid builder deposit must not stop later ones from finding a
+    valid validator deposit queued after it.
+    """
+    post_spec = phases[GLOAS]
+    amount = post_spec.MIN_DEPOSIT_AMOUNT
+    pubkey = builder_pubkeys[0]
+    invalid_validator_deposit_1 = create_pending_deposit_for_unregistered_validator(
+        post_spec, pubkey, amount, signed=False
+    )
+    invalid_builder_deposit_1 = create_pending_deposit_for_builder(
+        post_spec, pubkey, amount, signed=False
+    )
+    valid_validator_deposit = create_pending_deposit_for_unregistered_validator(
+        post_spec, pubkey, amount * 2
+    )
+    invalid_builder_deposit_2 = create_pending_deposit_for_builder(
+        post_spec, pubkey, amount * 3, signed=False
+    )
+    invalid_validator_deposit_2 = create_pending_deposit_for_unregistered_validator(
+        post_spec, pubkey, amount * 4, signed=False
+    )
+    invalid_builder_deposit_3 = create_pending_deposit_for_builder(
+        post_spec, pubkey, amount * 5, signed=False
+    )
+    state.pending_deposits = spec.PendingDeposits.of(
+        invalid_validator_deposit_1,
+        invalid_builder_deposit_1,
+        valid_validator_deposit,
+        invalid_builder_deposit_2,
+        invalid_validator_deposit_2,
+        invalid_builder_deposit_3,
+    )
+
+    post_state = yield from run_fork_test(post_spec, state)
+
+    assert len(post_state.builders) == 0
+    assert list(post_state.pending_deposits) == [
+        invalid_validator_deposit_1,
+        valid_validator_deposit,
+        invalid_builder_deposit_2,
+        invalid_validator_deposit_2,
+        invalid_builder_deposit_3,
+    ]
