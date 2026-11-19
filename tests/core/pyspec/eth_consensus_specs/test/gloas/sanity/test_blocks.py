@@ -17,6 +17,7 @@ from eth_consensus_specs.test.helpers.attestations import (
     get_max_attestations,
     get_valid_attestation,
     sign_attestation,
+    state_transition_with_full_block,
 )
 from eth_consensus_specs.test.helpers.attester_slashings import (
     get_max_attester_slashings,
@@ -560,31 +561,21 @@ def test_invalid_too_many_attester_slashings(spec, state):
     yield "post", None
 
 
-@with_gloas_and_later
-@spec_state_test
-def test_builder_payment_removed_when_proposer_slashes_itself(spec, state):
-    """
-    Test that a proposer cannot keep its builder payment by slashing itself in
-    the block that carries the bid.
-    """
-    # Advance to get finalization
-    for _ in range(4):
-        next_epoch_with_full_participation(spec, state)
-    assert state.finalized_checkpoint.epoch == 2
-
+def build_self_slashing_bid_block(spec, state, value, block_hash):
+    """Block whose proposer includes its own attester slashing next to a builder bid."""
     block = build_empty_block_for_next_slot(spec, state)
     builder_index = 0
-    value = spec.Gwei(1000000)  # 0.001 ETH
-
     bid = block.body.signed_execution_payload_bid.message
+    bid.block_hash = block_hash
     bid.builder_index = builder_index
     bid.value = value
-    signature = spec.get_execution_payload_bid_signature(
-        state, bid, builder_privkeys[builder_index]
-    )
+    bid.fee_recipient = b"\xab" * 20
+    bid.execution_requests_root = spec.hash_tree_root(spec.ExecutionRequests())
     block.body.signed_execution_payload_bid = spec.SignedExecutionPayloadBid(
         message=bid,
-        signature=signature,
+        signature=spec.get_execution_payload_bid_signature(
+            state, bid, builder_privkeys[builder_index]
+        ),
     )
     state.builders[builder_index].balance = spec.MIN_DEPOSIT_AMOUNT + value
 
@@ -592,6 +583,24 @@ def test_builder_payment_removed_when_proposer_slashes_itself(spec, state):
         spec, state, [block.proposer_index], signed_1=True, signed_2=True
     )
     block.body.attester_slashings = spec.AttesterSlashings(data=[attester_slashing])
+    return block
+
+
+@with_gloas_and_later
+@spec_state_test
+def test_builder_payment_kept_when_proposer_slashes_itself(spec, state):
+    """
+    Test that the builder payment survives the proposer slashing itself in the
+    block that carries the bid. It is settled if the payload is applied by the
+    child block and skipped at quorum otherwise.
+    """
+    # Advance to get finalization
+    for _ in range(4):
+        next_epoch_with_full_participation(spec, state)
+    assert state.finalized_checkpoint.epoch == 2
+
+    value = spec.Gwei(1000000)  # 0.001 ETH
+    block = build_self_slashing_bid_block(spec, state, value, spec.Hash32(b"\x42" * 32))
 
     yield "pre", state
 
@@ -602,7 +611,132 @@ def test_builder_payment_removed_when_proposer_slashes_itself(spec, state):
 
     assert state.validators[block.proposer_index].slashed
     payment_index = spec.SLOTS_PER_EPOCH + block.slot % spec.SLOTS_PER_EPOCH
-    assert state.builder_pending_payments[payment_index] == spec.BuilderPendingPayment()
+    payment = state.builder_pending_payments[payment_index]
+    assert payment.withdrawal.amount == value
+    assert payment.proposer_index == block.proposer_index
+
+
+@with_gloas_and_later
+@spec_state_test
+def test_builder_payment_paid_when_self_slashed_proposer_payload_applied(spec, state):
+    """
+    Test that a builder pays for its payload when the child block applies it,
+    even though the proposer slashed itself in the block that carries the bid.
+    """
+    # Advance to get finalization
+    for _ in range(4):
+        next_epoch_with_full_participation(spec, state)
+    assert state.finalized_checkpoint.epoch == 2
+
+    value = spec.Gwei(1000000)  # 0.001 ETH
+    block_hash = spec.Hash32(b"\x42" * 32)
+    block_1 = build_self_slashing_bid_block(spec, state, value, block_hash)
+
+    yield "pre", state
+
+    signed_block_1 = state_transition_and_sign_block(spec, state, block_1)
+    pre_builder_balance = state.builders[0].balance
+
+    block_2 = build_empty_block_for_next_slot(spec, state)
+    block_2.body.signed_execution_payload_bid.message.parent_block_hash = block_hash
+    signed_block_2 = state_transition_and_sign_block(spec, state, block_2)
+
+    yield "blocks", [signed_block_1, signed_block_2]
+    yield "post", state
+
+    assert state.validators[block_1.proposer_index].slashed
+    assert state.execution_payload_availability[block_1.slot % spec.SLOTS_PER_HISTORICAL_ROOT]
+    assert state.builders[0].balance == pre_builder_balance - value
+
+
+@with_gloas_and_later
+@spec_state_test
+def test_builder_payment_paid_when_self_slashed_proposer_payload_applied_after_missed_epochs(
+    spec, state
+):
+    """
+    Test that a builder pays for its payload when the child block applies it
+    2+ epochs later, after the payment was evicted from the pending payments,
+    even though the proposer slashed itself in the block that carries the bid.
+    """
+    # Advance to get finalization
+    for _ in range(4):
+        next_epoch_with_full_participation(spec, state)
+    assert state.finalized_checkpoint.epoch == 2
+
+    value = spec.Gwei(1000000)  # 0.001 ETH
+    block_hash = spec.Hash32(b"\x42" * 32)
+    block_1 = build_self_slashing_bid_block(spec, state, value, block_hash)
+
+    yield "pre", state
+
+    signed_block_1 = state_transition_and_sign_block(spec, state, block_1)
+    pre_builder_balance = state.builders[0].balance
+
+    block_1_epoch = spec.compute_epoch_at_slot(block_1.slot)
+    block_2_slot = spec.compute_start_slot_at_epoch(block_1_epoch + 2) + 1
+    block_2 = build_empty_block(spec, state, slot=block_2_slot)
+    block_2.body.signed_execution_payload_bid.message.parent_block_hash = block_hash
+    signed_block_2 = state_transition_and_sign_block(spec, state, block_2)
+
+    yield "blocks", [signed_block_1, signed_block_2]
+    yield "post", state
+
+    assert state.validators[block_1.proposer_index].slashed
+    assert state.execution_payload_availability[block_1.slot % spec.SLOTS_PER_HISTORICAL_ROOT]
+    assert state.builders[0].balance == pre_builder_balance - value
+
+
+@with_gloas_and_later
+@spec_state_test
+def test_builder_payment_not_paid_when_self_slashed_proposer_payload_withheld(spec, state):
+    """
+    Test that a builder does not pay for a withheld payload when the proposer
+    slashed itself in the block that carries the bid, even though the block
+    reaches the payment quorum.
+    """
+    # Advance to get finalization
+    for _ in range(4):
+        next_epoch_with_full_participation(spec, state)
+    assert state.finalized_checkpoint.epoch == 2
+
+    value = spec.Gwei(1000000)  # 0.001 ETH
+    block_1 = build_self_slashing_bid_block(spec, state, value, spec.Hash32(b"\x42" * 32))
+
+    yield "pre", state
+
+    signed_block_1 = state_transition_and_sign_block(spec, state, block_1)
+    pre_builder_balance = state.builders[0].balance
+    payment_index = spec.SLOTS_PER_EPOCH + block_1.slot % spec.SLOTS_PER_EPOCH
+    assert state.builder_pending_payments[payment_index].withdrawal.amount == value
+
+    # Fully attested blocks that never apply the payload, through the two epoch
+    # transitions that evaluate the payment. The slashed proposer can no longer
+    # propose, so its slots are skipped.
+    signed_blocks = [signed_block_1]
+    end_slot = spec.compute_start_slot_at_epoch(spec.compute_epoch_at_slot(block_1.slot) + 2)
+    while state.slot < end_slot:
+        next_state = state.copy()
+        next_slots(spec, next_state, 1)
+        if spec.get_beacon_proposer_index(next_state) == block_1.proposer_index:
+            next_slots(spec, state, 1)
+            continue
+        signed_blocks.append(
+            state_transition_with_full_block(spec, state, fill_cur_epoch=True, fill_prev_epoch=True)
+        )
+        if state.slot == block_1.slot + 1:
+            # the attestations for the bid block take the payment to quorum
+            assert state.builder_pending_payments[payment_index].weight >= (
+                spec.get_builder_payment_quorum_threshold(state)
+            )
+
+    yield "blocks", signed_blocks
+    yield "post", state
+
+    assert state.validators[block_1.proposer_index].slashed
+    assert not state.execution_payload_availability[block_1.slot % spec.SLOTS_PER_HISTORICAL_ROOT]
+    assert len(state.builder_pending_withdrawals) == 0
+    assert state.builders[0].balance == pre_builder_balance
 
 
 @with_gloas_and_later
