@@ -435,8 +435,8 @@ def filter_node_tree(store: Store, node: ForkChoiceNode) -> Sequence[ForkChoiceN
             viable_nodes.extend(filter_node_tree(store, child))
         if any(viable_nodes):
             return viable_nodes + [node]
-        return []
 
+    # Otherwise, the node ends its branch and is checked itself
     current_epoch = get_current_store_epoch(store)
     voting_source = get_voting_source(store, node.root)
 
