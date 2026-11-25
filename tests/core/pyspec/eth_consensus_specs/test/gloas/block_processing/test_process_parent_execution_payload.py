@@ -448,6 +448,49 @@ def test_process_parent_execution_payload__older_than_previous_epoch(spec, state
 
 @with_gloas_and_later
 @spec_state_test
+def test_process_parent_execution_payload__older_than_previous_epoch_non_empty_queue(spec, state):
+    """
+    Test ``apply_parent_execution_payload`` appends the withdrawal to the end of
+    a non-empty ``builder_pending_withdrawals`` when the parent's slot is older
+    than the previous epoch.
+    """
+    builder_index = 0
+    value = spec.Gwei(50_000_000)
+    fee_recipient = spec.ExecutionAddress(b"\xab" * 20)
+    parent_bid = _commit_full_parent_with_payment(spec, state, value, builder_index, fee_recipient)
+
+    # Cross two epoch boundaries to evict payments
+    spec.process_slots(state, 2 * spec.SLOTS_PER_EPOCH)
+    block = build_empty_block_for_next_slot(spec, state)
+    spec.process_slots(state, block.slot)
+    assert spec.compute_epoch_at_slot(parent_bid.slot) < spec.get_previous_epoch(state)
+
+    # Queue withdrawals for other builders ahead of the parent's payment
+    assert len(state.builders) > 2
+    for i in (1, 2):
+        state.builder_pending_withdrawals.append(
+            spec.BuilderPendingWithdrawal(
+                fee_recipient=spec.ExecutionAddress(bytes([i]) * 20),
+                amount=spec.Gwei(i * 10_000_000),
+                builder_index=spec.BuilderIndex(i),
+            )
+        )
+    pre_pending_withdrawals = state.builder_pending_withdrawals.copy()
+
+    yield from run_parent_execution_payload_processing(spec, state, block)
+
+    # The queued withdrawals are unchanged and the payment is appended last
+    assert len(state.builder_pending_withdrawals) == len(pre_pending_withdrawals) + 1
+    for i, pre in enumerate(pre_pending_withdrawals):
+        assert state.builder_pending_withdrawals[i] == pre
+    withdrawal = state.builder_pending_withdrawals[len(pre_pending_withdrawals)]
+    assert withdrawal.amount == value
+    assert withdrawal.builder_index == builder_index
+    assert withdrawal.fee_recipient == fee_recipient
+
+
+@with_gloas_and_later
+@spec_state_test
 def test_process_parent_execution_payload__older_than_previous_epoch_builder_exit(spec, state):
     """
     Test that a builder exit request in the parent's payload is rejected when the
