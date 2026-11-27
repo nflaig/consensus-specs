@@ -108,6 +108,71 @@ def test_gossip_blob_sidecar__valid(spec, state):
 
 @with_all_phases_from_to(DENEB, FULU)
 @spec_state_test
+@always_bls
+def test_gossip_blob_sidecar__valid_with_pre_fork_head_version(spec, state):
+    """
+    Test that a blob sidecar of the first block of a fork passes gossip
+    validation while the head state still carries the previous fork version.
+    """
+    yield "topic", "meta", "blob_sidecar"
+
+    state = build_state_with_complete_transition(spec, state)
+    anchor_state = state.copy()
+    yield "state", anchor_state
+
+    seen = get_seen(spec)
+    store, anchor_block = setup_store_with_anchor(spec, state)
+    signed_anchor = wrap_genesis_block(spec, anchor_block)
+    yield get_filename(signed_anchor), signed_anchor
+    yield "blocks", "meta", [{"block": get_filename(signed_anchor)}]
+
+    block, blobs, _, blob_kzg_proofs = build_block_with_blobs_for_next_slot(spec, state)
+    signed_block = sign_block(spec, state, block)
+    sidecars = spec.get_blob_sidecars(signed_block, blobs, blob_kzg_proofs)
+    blob_sidecar = sidecars[0]
+
+    yield get_filename(blob_sidecar), blob_sidecar
+
+    block_header = blob_sidecar.signed_block_header.message
+    current_time_ms = spec.compute_time_at_slot_ms(store.genesis_time_ms, block_header.slot)
+
+    # pyspec process_slots does not apply fork upgrades, so model the fork
+    # boundary by rolling the head state back to the previous fork version.
+    head_state = store.block_states[spec.get_head(store).root]
+    head_state.fork.current_version = head_state.fork.previous_version
+    assert head_state.fork.current_version != spec.compute_fork_version(
+        spec.compute_epoch_at_slot(block_header.slot)
+    )
+
+    subnet_id = correct_subnet(spec, blob_sidecar)
+    current_time_ms += 500
+    result, reason = run_validate_gossip(
+        spec,
+        seen=seen,
+        store=store,
+        blob_sidecar=blob_sidecar,
+        current_time_ms=current_time_ms,
+        subnet_id=subnet_id,
+    )
+    assert result == "valid"
+    assert reason is None
+
+    yield (
+        "messages",
+        "meta",
+        [
+            {
+                "subnet_id": int(subnet_id),
+                "current_time_ms": int(current_time_ms),
+                "message": get_filename(blob_sidecar),
+                "expected": "valid",
+            }
+        ],
+    )
+
+
+@with_all_phases_from_to(DENEB, FULU)
+@spec_state_test
 def test_gossip_blob_sidecar__reject_index_out_of_range(spec, state):
     """Test that a blob sidecar with index >= MAX_BLOBS_PER_BLOCK is rejected."""
     yield "topic", "meta", "blob_sidecar"
