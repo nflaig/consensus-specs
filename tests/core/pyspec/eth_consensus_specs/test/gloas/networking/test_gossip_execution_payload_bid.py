@@ -2536,17 +2536,11 @@ def test_gossip_execution_payload_bid__ignore_parent_state_unavailable(spec, sta
 
 @with_gloas_and_later
 @spec_state_test_with_matching_config
-def test_gossip_execution_payload_bid__ignore_slot_past_parent_lookahead(spec, state):
+def test_gossip_execution_payload_bid__valid_after_empty_epoch(spec, state):
     """
-    A bid whose slot is more than MIN_SEED_LOOKAHEAD epochs ahead of its parent
-    is ignored.
-
-    The parent state can only determine the proposer (and thus the proposer
-    lookahead dependent root) for proposals within MIN_SEED_LOOKAHEAD epochs of
-    the parent's epoch. A bid building on a parent that is two or more epochs
-    stale -- e.g. while the chain recovers from a multi-epoch halt -- must be
-    ignored rather than matched against a dependent root the parent cannot
-    determine.
+    A bid for a slot two epochs after its parent block is valid. Bid
+    validation advances the parent state to the bid's slot, so the parent's
+    own proposer lookahead does not bound the bid's slot.
     """
     anchor_state = state.copy()
     yield "topic", "meta", "execution_payload_bid"
@@ -2557,46 +2551,46 @@ def test_gossip_execution_payload_bid__ignore_slot_past_parent_lookahead(spec, s
     yield "state", anchor_state
     for signed in blocks:
         yield get_filename(signed), signed
+    yield get_filename(head_payload), head_payload
     yield "blocks", "meta", get_blocks_meta(blocks, head_payload)
     yield "finalized_checkpoint", "meta", finalized_checkpoint_meta
 
-    seen = get_seen(spec)
+    # No blocks for the rest of the parent's epoch and the whole next epoch.
+    # activate_builders edited the head state, so pin the header to the head
+    # block's real state root to keep the block roots of the empty slots right.
+    later_state = state.copy()
+    later_state.latest_block_header.state_root = blocks[-1].message.state_root
+    later_epoch = spec.get_current_epoch(state) + 2
+    spec.process_slots(later_state, spec.compute_start_slot_at_epoch(later_epoch))
+
+    current_time_ms = spec.compute_time_at_slot_ms(store.genesis_time_ms, later_state.slot)
     messages = []
-
-    # Make the parent's execution payload a known payload by validating its
-    # envelope, so the bid passes the parent-known checks before the lookahead
-    # check.
-    yield get_filename(head_payload), head_payload
-    result, reason = run_validate_gossip(
-        spec, seen=seen, store=store, signed_execution_payload_envelope=head_payload
+    (
+        seen,
+        common_fee,
+        parent_gas_limit,
+        proposal_slot,
+        parent_block_hash,
+        current_time_ms,
+    ) = yield from _seed_bid_context(
+        spec, later_state, store, head_payload, messages, current_time_ms
     )
-    assert result == "valid"
-    assert reason is None
-    messages.append(
-        {
-            "message": get_filename(head_payload),
-            "expected": result,
-        }
-    )
+    assert spec.compute_epoch_at_slot(proposal_slot) == later_epoch
 
-    # A bid for a slot more than MIN_SEED_LOOKAHEAD epochs past the parent's
-    # epoch: the parent cannot supply the proposer lookahead dependent root.
-    parent_epoch = spec.get_current_epoch(state)
-    future_epoch = spec.Epoch(parent_epoch + spec.MIN_SEED_LOOKAHEAD + 1)
-    future_slot = spec.compute_start_slot_at_epoch(future_epoch)
     signed_bid = build_signed_bid(
         spec,
-        state,
+        later_state,
         builder_index=spec.BuilderIndex(0),
-        slot=future_slot,
-        parent_block_hash=head_payload.message.payload.block_hash,
+        slot=proposal_slot,
+        parent_block_hash=parent_block_hash,
         parent_block_root=parent_root,
+        fee_recipient=common_fee,
+        gas_limit=parent_gas_limit,
         value=spec.Gwei(1),
     )
     yield get_filename(signed_bid), signed_bid
 
-    # Validate at the bid's own (future) slot so it counts as the current slot.
-    current_time_ms = spec.compute_time_at_slot_ms(store.genesis_time_ms, future_slot)
+    current_time_ms += 40
     result, reason = run_validate_gossip(
         spec,
         seen=seen,
@@ -2604,14 +2598,13 @@ def test_gossip_execution_payload_bid__ignore_slot_past_parent_lookahead(spec, s
         signed_execution_payload_bid=signed_bid,
         current_time_ms=current_time_ms,
     )
-    assert result == "ignore"
-    assert reason == "bid's slot is past the parent's proposer lookahead"
+    assert result == "valid"
+    assert reason is None
     messages.append(
         {
             "current_time_ms": int(current_time_ms),
             "message": get_filename(signed_bid),
             "expected": result,
-            "reason": reason,
         }
     )
 
