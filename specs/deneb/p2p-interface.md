@@ -354,21 +354,27 @@ def validate_beacon_block_gossip(
     if parent_payload_status == PAYLOAD_STATUS_INVALIDATED:
         raise GossipIgnore("block's parent is valid and its payload is invalid")
 
-    state = store.block_states[get_head(store).root]
+    parent_state = store.block_states[block.parent_root].copy()
+    if parent_state.slot < block.slot:
+        process_slots(parent_state, block.slot)
 
     # [REJECT] The proposer index is a valid validator index
-    if block.proposer_index >= len(state.validators):
+    if block.proposer_index >= len(parent_state.validators):
         raise GossipReject("proposer index out of range")
 
     # [REJECT] The proposer signature is valid
-    proposer = state.validators[block.proposer_index]
-    domain = get_domain(state, DOMAIN_BEACON_PROPOSER, compute_epoch_at_slot(block.slot))
+    proposer = parent_state.validators[block.proposer_index]
+    domain = compute_domain(
+        DOMAIN_BEACON_PROPOSER,
+        compute_fork_version(compute_epoch_at_slot(block.slot)),
+        parent_state.genesis_validators_root,
+    )
     signing_root = compute_signing_root(block, domain)
     if not bls.Verify(proposer.pubkey, signing_root, signed_beacon_block.signature):
         raise GossipReject("invalid proposer signature")
 
     # [REJECT] The block's execution payload timestamp is correct with respect to the slot
-    if execution_payload.timestamp != compute_time_at_slot(state.genesis_time, block.slot):
+    if execution_payload.timestamp != compute_time_at_slot(parent_state.genesis_time, block.slot):
         raise GossipReject("incorrect execution payload timestamp")
 
     # [REJECT] The block is from a higher slot than its parent
@@ -388,8 +394,6 @@ def validate_beacon_block_gossip(
 
     # [REJECT] The block is proposed by the expected proposer for the slot
     # (if shuffling is not available, IGNORE instead and MAY be queued for later)
-    parent_state = store.block_states[block.parent_root].copy()
-    process_slots(parent_state, block.slot)
     expected_proposer = get_beacon_proposer_index(parent_state)
     if block.proposer_index != expected_proposer:
         raise GossipReject("block proposer_index does not match expected proposer")
