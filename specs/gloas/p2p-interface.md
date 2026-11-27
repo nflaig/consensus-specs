@@ -743,15 +743,21 @@ def validate_beacon_block_gossip(
     if block.parent_root not in store.block_states:
         raise GossipReject("block's parent is invalid")
 
-    state = store.block_states[get_head(store).root]
+    parent_state = store.block_states[block.parent_root].copy()
+    if parent_state.slot < block.slot:
+        process_slots(parent_state, block.slot)
 
     # [REJECT] The proposer index is a valid validator index
-    if block.proposer_index >= len(state.validators):
+    if block.proposer_index >= len(parent_state.validators):
         raise GossipReject("proposer index out of range")
 
     # [REJECT] The proposer signature is valid
-    proposer = state.validators[block.proposer_index]
-    domain = get_domain(state, DOMAIN_BEACON_PROPOSER, compute_epoch_at_slot(block.slot))
+    proposer = parent_state.validators[block.proposer_index]
+    domain = compute_domain(
+        DOMAIN_BEACON_PROPOSER,
+        compute_fork_version(compute_epoch_at_slot(block.slot)),
+        parent_state.genesis_validators_root,
+    )
     signing_root = compute_signing_root(block, domain)
     if not bls.Verify(proposer.pubkey, signing_root, signed_beacon_block.signature):
         raise GossipReject("invalid proposer signature")
@@ -785,8 +791,6 @@ def validate_beacon_block_gossip(
         raise GossipReject("bid's parent does not equal block's parent")
 
     # [REJECT] The block is proposed by the expected proposer for the slot
-    parent_state = store.block_states[block.parent_root].copy()
-    process_slots(parent_state, block.slot)
     expected_proposer = get_beacon_proposer_index(parent_state)
     if block.proposer_index != expected_proposer:
         raise GossipReject("block proposer_index does not match expected proposer")
