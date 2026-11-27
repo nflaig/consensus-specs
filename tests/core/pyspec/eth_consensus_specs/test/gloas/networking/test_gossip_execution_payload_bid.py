@@ -2374,23 +2374,21 @@ def test_gossip_execution_payload_bid__reject_slot_not_higher_than_parent(spec, 
 @with_gloas_and_later
 @spec_state_test_with_matching_config
 def test_gossip_execution_payload_bid__ignore_parent_block_hash_unknown(spec, state):
-    """A bid whose parent_block_hash is not in seen.execution_payloads is ignored.
+    """A bid whose parent_block_hash is not a payload verified by fork choice is ignored.
 
-    No envelope is seeded, which is exactly the condition under test. The gas
-    limit compatibility check requires the parent payload, so it can only be
-    evaluated once the parent block hash is known.
+    The head's payload envelope is never verified, which is exactly the
+    condition under test. The gas limit compatibility check requires the parent
+    payload, so it can only be evaluated once the parent block hash is known.
     """
     anchor_state = state.copy()
     yield "topic", "meta", "execution_payload_bid"
 
     store, blocks, parent_root = setup_store_advanced_for_bid(spec, state)
     finalized_checkpoint_meta = activate_builders(spec, state, store, blocks)
-    head_payload = record_head_payload(spec, state, store, blocks)
     yield "state", anchor_state
     for signed in blocks:
         yield get_filename(signed), signed
-    yield get_filename(head_payload), head_payload
-    yield "blocks", "meta", get_blocks_meta(blocks, head_payload)
+    yield "blocks", "meta", get_blocks_meta(blocks)
     yield "finalized_checkpoint", "meta", finalized_checkpoint_meta
 
     current_time_ms = spec.compute_time_at_slot_ms(store.genesis_time_ms, state.slot)
@@ -2403,9 +2401,7 @@ def test_gossip_execution_payload_bid__ignore_parent_block_hash_unknown(spec, st
         parent_block_hash,
         current_time_ms,
     ) = yield from (
-        _seed_bid_context(
-            spec, state, store, head_payload, messages, current_time_ms, seed_envelope=False
-        )
+        _seed_bid_context(spec, state, store, None, messages, current_time_ms, seed_envelope=False)
     )
 
     signed_bid = build_signed_bid(
@@ -2430,7 +2426,7 @@ def test_gossip_execution_payload_bid__ignore_parent_block_hash_unknown(spec, st
         current_time_ms=current_time_ms,
     )
     assert result == "ignore"
-    assert reason == "bid's parent block hash is not a known execution payload"
+    assert reason == "bid's parent block hash is not a verified execution payload"
     messages.append(
         {
             "current_time_ms": int(current_time_ms),
@@ -3239,7 +3235,7 @@ def _run_bid_gas_limit_scenario(
     yield "topic", "meta", "execution_payload_bid"
 
     # The head block's bid commits to parent_gas_limit, so the envelope's
-    # payload.gas_limit (which gets seeded into seen.execution_payloads)
+    # payload.gas_limit (which fork choice records when verifying it)
     # equals it.
     store, blocks, parent_root = setup_store_advanced_for_bid(
         spec, state, head_gas_limit=spec.Uint64(parent_gas_limit)
@@ -3712,6 +3708,76 @@ def test_gossip_execution_payload_bid__valid_requires_state_advanced_across_epoc
     current_time_ms = _advance_to_payload_attestation_due(
         spec, store, signed_bid.message.slot, current_time_ms
     )
+    result, reason = run_validate_gossip(
+        spec,
+        seen=seen,
+        store=store,
+        signed_execution_payload_bid=signed_bid,
+        current_time_ms=current_time_ms,
+    )
+    assert result == "valid"
+    assert reason is None
+    messages.append(
+        {
+            "current_time_ms": int(current_time_ms),
+            "message": get_filename(signed_bid),
+            "expected": result,
+        }
+    )
+
+    yield "messages", "meta", messages
+
+
+@with_gloas_and_later
+@spec_state_test_with_matching_config
+def test_gossip_execution_payload_bid__valid_parent_payload_not_seen_on_gossip(spec, state):
+    """
+    A bid building on a payload verified by fork choice is valid even when the
+    payload's envelope was never received on gossip, e.g. after it was
+    requested by root.
+    """
+    anchor_state = state.copy()
+    yield "topic", "meta", "execution_payload_bid"
+
+    store, blocks, parent_root = setup_store_advanced_for_bid(spec, state)
+    finalized_checkpoint_meta = activate_builders(spec, state, store, blocks)
+    head_payload = record_head_payload(spec, state, store, blocks)
+    yield "state", anchor_state
+    for signed in blocks:
+        yield get_filename(signed), signed
+    yield get_filename(head_payload), head_payload
+    yield "blocks", "meta", get_blocks_meta(blocks, head_payload)
+    yield "finalized_checkpoint", "meta", finalized_checkpoint_meta
+
+    current_time_ms = spec.compute_time_at_slot_ms(store.genesis_time_ms, state.slot)
+    messages = []
+    (
+        seen,
+        common_fee,
+        parent_gas_limit,
+        proposal_slot,
+        parent_block_hash,
+        current_time_ms,
+    ) = yield from (
+        _seed_bid_context(
+            spec, state, store, head_payload, messages, current_time_ms, seed_envelope=False
+        )
+    )
+
+    signed_bid = build_signed_bid(
+        spec,
+        state,
+        builder_index=spec.BuilderIndex(0),
+        slot=proposal_slot,
+        parent_block_hash=parent_block_hash,
+        parent_block_root=parent_root,
+        fee_recipient=common_fee,
+        gas_limit=parent_gas_limit,
+        value=spec.Gwei(1),
+    )
+    yield get_filename(signed_bid), signed_bid
+
+    current_time_ms += 40
     result, reason = run_validate_gossip(
         spec,
         seen=seen,
