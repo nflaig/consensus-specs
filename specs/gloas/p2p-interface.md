@@ -29,6 +29,7 @@
   - [New `is_past_slot`](#new-is_past_slot)
   - [New `is_gas_limit_target_compatible`](#new-is_gas_limit_target_compatible)
   - [New `is_bid_compatible_with_head`](#new-is_bid_compatible_with_head)
+  - [New `get_verified_payloads`](#new-get_verified_payloads)
   - [New `get_max_payload_gas_limit`](#new-get_max_payload_gas_limit)
   - [New `verify_attestation_payload_status`](#new-verify_attestation_payload_status)
   - [New `verify_block_body_operation_limits`](#new-verify_block_body_operation_limits)
@@ -217,8 +218,6 @@ class Seen:
     data_column_sidecar_tuples: set[tuple[Root, ColumnIndex]]
     # [Modified in Gloas:EIP7732]
     # Removed `partial_data_column_headers`
-    # [New in Gloas:EIP7732]
-    execution_payloads: dict[Hash32, ExecutionPayload]
     # [New in Gloas:EIP7732]
     execution_payload_envelopes: set[tuple[Root, BuilderIndex]]
     # [New in Gloas:EIP7732]
@@ -450,6 +449,19 @@ def is_bid_compatible_with_head(store: Store, bid: ExecutionPayloadBid) -> bool:
 
     return builds_on_parent_payload
 ```
+
+### New `get_verified_payloads`
+
+```python
+def get_verified_payloads(store: Store) -> dict[Hash32, ExecutionPayload]:
+    """
+    Return the execution payloads verified by fork choice, keyed by block hash.
+    """
+    return {envelope.payload.block_hash: envelope.payload for envelope in store.payloads.values()}
+```
+
+*Note*: A payload can be verified without its envelope arriving over gossip,
+e.g. when it is requested with `ExecutionPayloadEnvelopesByRoot`.
 
 ### New `get_max_payload_gas_limit`
 
@@ -1053,9 +1065,8 @@ def validate_execution_payload_envelope_gossip(
     if not verify_execution_payload_envelope_signature(state, signed_execution_payload_envelope):
         raise GossipReject("invalid envelope signature")
 
-    # Mark this envelope as seen and store its payload
+    # Mark this envelope as seen
     seen.execution_payload_envelopes.add(envelope_key)
-    seen.execution_payloads[payload.block_hash] = payload
 ```
 
 ##### New `payload_attestation_message`
@@ -1211,12 +1222,13 @@ def validate_execution_payload_bid_gossip(
     if bid.fee_recipient != proposer_preferences.fee_recipient:
         raise GossipIgnore("bid's fee recipient does not match the proposer's preference")
 
-    # [IGNORE] The bid's parent block hash is the hash of a known execution payload
-    if bid.parent_block_hash not in seen.execution_payloads:
-        raise GossipIgnore("bid's parent block hash is not a known execution payload")
+    # [IGNORE] The bid's parent block hash is the hash of a verified execution payload
+    verified_payloads = get_verified_payloads(store)
+    if bid.parent_block_hash not in verified_payloads:
+        raise GossipIgnore("bid's parent block hash is not a verified execution payload")
 
     # [IGNORE] The bid's gas limit is compatible with the proposer's target gas limit
-    parent_gas_limit = seen.execution_payloads[bid.parent_block_hash].gas_limit
+    parent_gas_limit = verified_payloads[bid.parent_block_hash].gas_limit
     if not is_gas_limit_target_compatible(
         parent_gas_limit, bid.gas_limit, proposer_preferences.target_gas_limit
     ):
