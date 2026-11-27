@@ -1102,7 +1102,7 @@ def validate_payload_attestation_message_gossip(
     if store.blocks[data.beacon_block_root].slot != data.slot:
         raise GossipIgnore("payload attestation's block is not at the assigned slot")
 
-    state = store.block_states[get_head(store).root]
+    state = store.block_states[data.beacon_block_root]
 
     # [REJECT] The validator index is valid
     if validator_index >= len(state.validators):

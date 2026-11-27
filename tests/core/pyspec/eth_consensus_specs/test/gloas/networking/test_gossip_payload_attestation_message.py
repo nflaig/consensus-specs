@@ -708,3 +708,83 @@ def test_gossip_payload_attestation_message__ignore_block_not_at_assigned_slot(s
     )
 
     yield "messages", "meta", messages
+
+
+@with_gloas_and_later
+@spec_state_test_with_matching_config
+def test_gossip_payload_attestation_message__valid_block_on_non_head_branch(spec, state):
+    """
+    A PTC member of the attested block's branch passes even when the head is a
+    sibling whose state holds a different committee for the slot, as it does
+    once two branches have diverged in RANDAO.
+    """
+    anchor_state = state.copy()
+    yield "topic", "meta", "payload_attestation_message"
+
+    store, anchor_block = get_genesis_forkchoice_store_and_block(spec, state)
+    signed_anchor = wrap_genesis_block(spec, anchor_block)
+
+    signed_blocks = []
+    block_states = []
+    for graffiti in [b"\x01" * 32, b"\x02" * 32]:
+        branch_state = state.copy()
+        block = build_empty_block_for_next_slot(spec, branch_state)
+        block.body.graffiti = graffiti
+        signed_block = state_transition_and_sign_block(spec, branch_state, block)
+        block_root = signed_block.message.hash_tree_root()
+        store.blocks[block_root] = signed_block.message
+        store.block_states[block_root] = branch_state.copy()
+        signed_blocks.append(signed_block)
+        block_states.append(branch_state)
+
+    yield "state", anchor_state
+    blocks = [signed_anchor] + signed_blocks
+    for signed in blocks:
+        yield get_filename(signed), signed
+    yield "blocks", "meta", [{"block": get_filename(b)} for b in blocks]
+
+    head_root = spec.get_head(store).root
+    attested_index = 0 if signed_blocks[0].message.hash_tree_root() != head_root else 1
+    attested_root = signed_blocks[attested_index].message.hash_tree_root()
+    attested_state = block_states[attested_index]
+    slot = attested_state.slot
+    validator_index = spec.get_ptc(attested_state, slot)[0]
+
+    # Give the head branch a committee for the slot without the validator
+    head_state = store.block_states[head_root]
+    other_index = next(i for i in range(len(head_state.validators)) if i != validator_index)
+    window_index = spec.SLOTS_PER_EPOCH + slot % spec.SLOTS_PER_EPOCH
+    head_state.ptc_window[window_index] = spec.PayloadTimelinessCommittee(
+        data=[other_index] * spec.PTC_SIZE
+    )
+    assert validator_index not in spec.get_ptc(head_state, slot)
+    assert validator_index in spec.get_ptc(store.block_states[attested_root], slot)
+
+    seen = get_seen(spec)
+    message = build_payload_attestation_message(
+        spec, attested_state, slot, attested_root, validator_index
+    )
+    yield get_filename(message), message
+
+    current_time_ms = spec.compute_time_at_slot_ms(store.genesis_time_ms, slot) + 100
+    result, reason = run_validate_gossip(
+        spec,
+        seen=seen,
+        store=store,
+        payload_attestation_message=message,
+        current_time_ms=current_time_ms,
+    )
+    assert result == "valid"
+    assert reason is None
+
+    yield (
+        "messages",
+        "meta",
+        [
+            {
+                "current_time_ms": int(current_time_ms),
+                "message": get_filename(message),
+                "expected": result,
+            }
+        ],
+    )
