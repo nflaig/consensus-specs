@@ -282,13 +282,6 @@ def validate_beacon_aggregate_and_proof_gossip(
     if block_root not in store.block_states:
         raise GossipReject("block being voted for failed validation")
 
-    state = store.block_states[get_head(store).root]
-
-    # [REJECT] The committee index is within the expected range
-    committee_count = get_committee_count_per_slot(state, aggregate.data.target.epoch)
-    if index >= committee_count:
-        raise GossipReject("committee index out of range")
-
     # [IGNORE] The aggregate attestation's slot is not from a future slot
     # (MAY be queued for processing at the appropriate slot)
     if is_future_slot(store, aggregate.data.slot, current_time_ms):
@@ -302,6 +295,17 @@ def validate_beacon_aggregate_and_proof_gossip(
     # [REJECT] The aggregate attestation's epoch matches its target
     if aggregate.data.target.epoch != compute_epoch_at_slot(aggregate.data.slot):
         raise GossipReject("attestation epoch does not match target epoch")
+
+    # The committees are those of the target epoch on the voted block's branch
+    state = store.block_states[block_root].copy()
+    target_slot = compute_start_slot_at_epoch(target_epoch)
+    if state.slot < target_slot:
+        process_slots(state, target_slot)
+
+    # [REJECT] The committee index is within the expected range
+    committee_count = get_committee_count_per_slot(state, aggregate.data.target.epoch)
+    if index >= committee_count:
+        raise GossipReject("committee index out of range")
 
     # [REJECT] The number of aggregation bits matches the committee size
     committee = get_beacon_committee(state, aggregate.data.slot, index)
@@ -323,19 +327,30 @@ def validate_beacon_aggregate_and_proof_gossip(
 
     # [REJECT] The selection proof signature is valid
     aggregator = state.validators[aggregator_index]
-    domain = get_domain(state, DOMAIN_SELECTION_PROOF, target_epoch)
+    domain = compute_domain(
+        DOMAIN_SELECTION_PROOF, compute_fork_version(target_epoch), state.genesis_validators_root
+    )
     signing_root = compute_signing_root(aggregate.data.slot, domain)
     if not bls.Verify(aggregator.pubkey, signing_root, aggregate_and_proof.selection_proof):
         raise GossipReject("invalid selection proof signature")
 
     # [REJECT] The aggregator signature is valid
-    domain = get_domain(state, DOMAIN_AGGREGATE_AND_PROOF, target_epoch)
+    domain = compute_domain(
+        DOMAIN_AGGREGATE_AND_PROOF,
+        compute_fork_version(target_epoch),
+        state.genesis_validators_root,
+    )
     signing_root = compute_signing_root(aggregate_and_proof, domain)
     if not bls.Verify(aggregator.pubkey, signing_root, signed_aggregate_and_proof.signature):
         raise GossipReject("invalid aggregator signature")
 
     # [REJECT] The aggregate signature is valid
-    if not is_valid_indexed_attestation(state, get_indexed_attestation(state, aggregate)):
+    pubkeys = [state.validators[index].pubkey for index in attesting_indices]
+    domain = compute_domain(
+        DOMAIN_BEACON_ATTESTER, compute_fork_version(target_epoch), state.genesis_validators_root
+    )
+    signing_root = compute_signing_root(aggregate.data, domain)
+    if not bls.FastAggregateVerify(pubkeys, signing_root, aggregate.signature):
         raise GossipReject("invalid aggregate signature")
 
     # [REJECT] The target block is an ancestor of the LMD vote block

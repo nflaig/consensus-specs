@@ -35,6 +35,7 @@ from eth_consensus_specs.test.helpers.keys import privkeys
 from eth_consensus_specs.test.helpers.state import (
     next_slot,
     state_transition_and_sign_block,
+    transition_to,
 )
 
 
@@ -1639,6 +1640,81 @@ def test_gossip_beacon_aggregate_and_proof__ignore_finalized_not_ancestor(spec, 
                 "message": get_filename(signed_agg),
                 "expected": "ignore",
                 "reason": reason,
+            }
+        ],
+    )
+
+
+@with_all_phases
+@spec_state_test
+@always_bls
+def test_gossip_beacon_aggregate_and_proof__valid_target_epoch_after_empty_epochs(spec, state):
+    """
+    Test that an aggregate is validated with the committees of its target epoch when empty
+    epochs separate the voted head block from the target epoch.
+    """
+    anchor_state = state.copy()
+    yield "topic", "meta", "beacon_aggregate_and_proof"
+    yield "state", anchor_state
+
+    seen = get_seen(spec)
+    store, anchor_block = get_genesis_forkchoice_store_and_block(spec, state)
+    signed_anchor = wrap_genesis_block(spec, anchor_block)
+
+    yield get_filename(signed_anchor), signed_anchor
+
+    # The block's RANDAO reveal changes the mix that seeds later shufflings
+    block = build_empty_block_for_next_slot(spec, state)
+    signed_block = state_transition_and_sign_block(spec, state, block)
+    block_root = signed_block.message.hash_tree_root()
+    store.blocks[block_root] = signed_block.message
+    store.block_states[block_root] = state.copy()
+
+    yield get_filename(signed_block), signed_block
+    yield (
+        "blocks",
+        "meta",
+        [
+            {"block": get_filename(signed_anchor)},
+            {"block": get_filename(signed_block)},
+        ],
+    )
+
+    # The seed of the target epoch is mixed in after the block's epoch
+    target_epoch = spec.Epoch(spec.compute_epoch_at_slot(block.slot) + spec.MIN_SEED_LOOKAHEAD + 2)
+    transition_to(spec, state, spec.compute_start_slot_at_epoch(target_epoch))
+
+    attestation = get_valid_attestation(spec, state, signed=True, beacon_block_root=block_root)
+    assert attestation.data.target == spec.Checkpoint(epoch=target_epoch, root=block_root)
+    signed_agg = create_signed_aggregate_and_proof(spec, state, attestation)
+
+    yield get_filename(signed_agg), signed_agg
+
+    current_time_ms = spec.compute_time_at_slot_ms(store.genesis_time_ms, attestation.data.slot)
+
+    kwargs = {}
+    if is_post_gloas(spec):
+        kwargs["block_payload_statuses"] = {}
+    current_time_ms += 500
+    result, reason = run_validate_gossip(
+        spec,
+        seen=seen,
+        store=store,
+        signed_aggregate_and_proof=signed_agg,
+        current_time_ms=current_time_ms,
+        **kwargs,
+    )
+    assert result == "valid"
+    assert reason is None
+
+    yield (
+        "messages",
+        "meta",
+        [
+            {
+                "current_time_ms": int(current_time_ms),
+                "message": get_filename(signed_agg),
+                "expected": "valid",
             }
         ],
     )
