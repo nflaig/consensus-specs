@@ -223,7 +223,11 @@ def validate_bls_to_execution_change_gossip(
     if is_future_epoch(store, CAPELLA_FORK_EPOCH, current_time_ms):
         raise GossipIgnore("current epoch is pre-capella")
 
-    state = store.block_states[get_head(store).root]
+    # Validate against the next block's pre-state: the head state at the current slot
+    current_slot = compute_slot_at_time_ms(store.genesis_time_ms, current_time_ms)
+    state = store.block_states[get_head(store).root].copy()
+    if state.slot < current_slot:
+        process_slots(state, current_slot)
 
     # [REJECT] The validator index is valid
     if validator_index >= len(state.validators):
