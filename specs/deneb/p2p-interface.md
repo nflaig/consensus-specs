@@ -620,20 +620,6 @@ def validate_beacon_attestation_gossip(
     if block_root not in store.block_states:
         raise GossipReject("block being voted for failed validation")
 
-    state = store.block_states[get_head(store).root]
-
-    # [REJECT] The committee index is within the expected range
-    committees_per_slot = get_committee_count_per_slot(state, target_epoch)
-    if committee_index >= committees_per_slot:
-        raise GossipReject("committee index out of range")
-
-    # [REJECT] The attestation is for the correct subnet
-    expected_subnet = compute_subnet_for_attestation(
-        committees_per_slot, data.slot, committee_index
-    )
-    if expected_subnet != subnet_id:
-        raise GossipReject("attestation is for wrong subnet")
-
     # [Modified in Deneb:EIP7045]
     # [IGNORE] The attestation's slot is not from a future slot
     # (MAY be queued for processing at the appropriate slot)
@@ -649,6 +635,24 @@ def validate_beacon_attestation_gossip(
     # [REJECT] The attestation's epoch matches its target
     if target_epoch != compute_epoch_at_slot(data.slot):
         raise GossipReject("attestation epoch does not match target epoch")
+
+    # The committees are those of the target epoch on the voted block's branch
+    state = store.block_states[block_root].copy()
+    target_slot = compute_start_slot_at_epoch(target_epoch)
+    if state.slot < target_slot:
+        process_slots(state, target_slot)
+
+    # [REJECT] The committee index is within the expected range
+    committees_per_slot = get_committee_count_per_slot(state, target_epoch)
+    if committee_index >= committees_per_slot:
+        raise GossipReject("committee index out of range")
+
+    # [REJECT] The attestation is for the correct subnet
+    expected_subnet = compute_subnet_for_attestation(
+        committees_per_slot, data.slot, committee_index
+    )
+    if expected_subnet != subnet_id:
+        raise GossipReject("attestation is for wrong subnet")
 
     # [REJECT] The attestation is unaggregated (exactly one bit set)
     num_bits_set = get_set_bit_count(aggregation_bits)
@@ -668,8 +672,12 @@ def validate_beacon_attestation_gossip(
         raise GossipIgnore("already seen attestation for this epoch and validator")
 
     # [REJECT] The attestation signature is valid
-    indexed_attestation = get_indexed_attestation(state, attestation)
-    if not is_valid_indexed_attestation(state, indexed_attestation):
+    attester = state.validators[participant_index]
+    domain = compute_domain(
+        DOMAIN_BEACON_ATTESTER, compute_fork_version(target_epoch), state.genesis_validators_root
+    )
+    signing_root = compute_signing_root(data, domain)
+    if not bls.Verify(attester.pubkey, signing_root, attestation.signature):
         raise GossipReject("invalid attestation signature")
 
     # [REJECT] The attestation's target block is an ancestor of the LMD vote block
