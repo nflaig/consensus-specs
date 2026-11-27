@@ -80,6 +80,38 @@ def run_parent_execution_payload_processing(spec, state, block, valid=True):
     yield "post", state
 
 
+def _queue_other_builder_withdrawals(spec, state):
+    """
+    Queue withdrawals for builders other than builder 0 in ``builder_pending_withdrawals``.
+    Return a copy of the queue.
+    """
+    assert len(state.builders) > 2
+    for i in (1, 2):
+        state.builder_pending_withdrawals.append(
+            spec.BuilderPendingWithdrawal(
+                fee_recipient=spec.ExecutionAddress(bytes([i]) * 20),
+                amount=spec.Gwei(i * 10_000_000),
+                builder_index=spec.BuilderIndex(i),
+            )
+        )
+    return state.builder_pending_withdrawals.copy()
+
+
+def _assert_payment_appended(
+    spec, state, pre_pending_withdrawals, value, builder_index, fee_recipient
+):
+    """
+    Assert the queued withdrawals are unchanged and the payment is appended last.
+    """
+    assert len(state.builder_pending_withdrawals) == len(pre_pending_withdrawals) + 1
+    for i, pre in enumerate(pre_pending_withdrawals):
+        assert state.builder_pending_withdrawals[i] == pre
+    withdrawal = state.builder_pending_withdrawals[len(pre_pending_withdrawals)]
+    assert withdrawal.amount == value
+    assert withdrawal.builder_index == builder_index
+    assert withdrawal.fee_recipient == fee_recipient
+
+
 @with_gloas_and_later
 @spec_state_test
 def test_process_parent_execution_payload__empty_parent(spec, state):
@@ -203,6 +235,38 @@ def test_process_parent_execution_payload__full_parent_settles_builder_payment(s
 
     # The pending payment slot was cleared
     assert state.builder_pending_payments[payment_idx] == spec.BuilderPendingPayment()
+
+
+@with_gloas_and_later
+@spec_state_test
+def test_process_parent_execution_payload__full_parent_settles_builder_payment_non_empty_queue(
+    spec, state
+):
+    """
+    Test ``apply_parent_execution_payload`` appends the settled current epoch
+    payment to the end of a non-empty ``builder_pending_withdrawals``.
+    """
+    builder_index = 0
+    value = spec.Gwei(50_000_000)
+    fee_recipient = spec.ExecutionAddress(b"\xab" * 20)
+
+    state.latest_execution_payload_bid.fee_recipient = fee_recipient
+    _commit_parent_requests(
+        spec, state, spec.ExecutionRequests(), value=value, builder_index=builder_index
+    )
+    parent_bid = state.latest_execution_payload_bid.copy()
+
+    block = build_empty_block_for_next_slot(spec, state)
+    spec.process_slots(state, block.slot)
+    assert spec.compute_epoch_at_slot(parent_bid.slot) == spec.get_current_epoch(state)
+
+    pre_pending_withdrawals = _queue_other_builder_withdrawals(spec, state)
+
+    yield from run_parent_execution_payload_processing(spec, state, block)
+
+    _assert_payment_appended(
+        spec, state, pre_pending_withdrawals, value, builder_index, fee_recipient
+    )
 
 
 @with_gloas_and_later
@@ -408,6 +472,33 @@ def test_process_parent_execution_payload__settle_previous_epoch(spec, state):
 
 @with_gloas_and_later
 @spec_state_test
+def test_process_parent_execution_payload__settle_previous_epoch_non_empty_queue(spec, state):
+    """
+    Test ``apply_parent_execution_payload`` appends the settled previous epoch
+    payment to the end of a non-empty ``builder_pending_withdrawals``.
+    """
+    builder_index = 0
+    value = spec.Gwei(50_000_000)
+    fee_recipient = spec.ExecutionAddress(b"\xab" * 20)
+    parent_bid = _commit_full_parent_with_payment(spec, state, value, builder_index, fee_recipient)
+
+    # Process one epoch
+    spec.process_slots(state, spec.SLOTS_PER_EPOCH)
+    block = build_empty_block_for_next_slot(spec, state)
+    spec.process_slots(state, block.slot)
+    assert spec.compute_epoch_at_slot(parent_bid.slot) == spec.get_previous_epoch(state)
+
+    pre_pending_withdrawals = _queue_other_builder_withdrawals(spec, state)
+
+    yield from run_parent_execution_payload_processing(spec, state, block)
+
+    _assert_payment_appended(
+        spec, state, pre_pending_withdrawals, value, builder_index, fee_recipient
+    )
+
+
+@with_gloas_and_later
+@spec_state_test
 def test_process_parent_execution_payload__older_than_previous_epoch(spec, state):
     """
     Test ``apply_parent_execution_payload`` appends the withdrawal directly when
@@ -443,6 +534,34 @@ def test_process_parent_execution_payload__older_than_previous_epoch(spec, state
     # Assert no payment slot is modified
     assert all(
         post == pre for post, pre in zip(state.builder_pending_payments, pre_payments, strict=True)
+    )
+
+
+@with_gloas_and_later
+@spec_state_test
+def test_process_parent_execution_payload__older_than_previous_epoch_non_empty_queue(spec, state):
+    """
+    Test ``apply_parent_execution_payload`` appends the withdrawal to the end of
+    a non-empty ``builder_pending_withdrawals`` when the parent's slot is older
+    than the previous epoch.
+    """
+    builder_index = 0
+    value = spec.Gwei(50_000_000)
+    fee_recipient = spec.ExecutionAddress(b"\xab" * 20)
+    parent_bid = _commit_full_parent_with_payment(spec, state, value, builder_index, fee_recipient)
+
+    # Cross two epoch boundaries to evict payments
+    spec.process_slots(state, 2 * spec.SLOTS_PER_EPOCH)
+    block = build_empty_block_for_next_slot(spec, state)
+    spec.process_slots(state, block.slot)
+    assert spec.compute_epoch_at_slot(parent_bid.slot) < spec.get_previous_epoch(state)
+
+    pre_pending_withdrawals = _queue_other_builder_withdrawals(spec, state)
+
+    yield from run_parent_execution_payload_processing(spec, state, block)
+
+    _assert_payment_appended(
+        spec, state, pre_pending_withdrawals, value, builder_index, fee_recipient
     )
 
 
