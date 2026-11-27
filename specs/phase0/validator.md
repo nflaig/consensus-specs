@@ -724,7 +724,11 @@ A validator is selected to aggregate based upon the return value of
 
 ```python
 def get_slot_signature(state: BeaconState, slot: Slot, privkey: int) -> BLSSignature:
-    domain = get_domain(state, DOMAIN_SELECTION_PROOF, compute_epoch_at_slot(slot))
+    domain = compute_domain(
+        DOMAIN_SELECTION_PROOF,
+        compute_fork_version(compute_epoch_at_slot(slot)),
+        state.genesis_validators_root,
+    )
     signing_root = compute_signing_root(slot, domain)
     return bls.Sign(privkey, signing_root)
 ```
@@ -809,8 +813,10 @@ def get_aggregate_and_proof_signature(
     state: BeaconState, aggregate_and_proof: AggregateAndProof, privkey: int
 ) -> BLSSignature:
     aggregate = aggregate_and_proof.aggregate
-    domain = get_domain(
-        state, DOMAIN_AGGREGATE_AND_PROOF, compute_epoch_at_slot(aggregate.data.slot)
+    domain = compute_domain(
+        DOMAIN_AGGREGATE_AND_PROOF,
+        compute_fork_version(compute_epoch_at_slot(aggregate.data.slot)),
+        state.genesis_validators_root,
     )
     signing_root = compute_signing_root(aggregate_and_proof, domain)
     return bls.Sign(privkey, signing_root)
