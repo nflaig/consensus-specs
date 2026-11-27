@@ -611,6 +611,59 @@ def test_gossip_voluntary_exit__reject_not_active_long_enough(spec, state):
 
 @with_all_phases
 @spec_state_test
+def test_gossip_voluntary_exit__valid_head_in_previous_epoch(spec, state):
+    """
+    Test that a voluntary exit is valid when the validator has been active long
+    enough at the current epoch while the head state is still in the previous epoch.
+    """
+    yield "topic", "meta", "voluntary_exit"
+
+    seen = get_seen(spec)
+
+    # The head is in the epoch before the validator has been active long enough
+    validator_index = 0
+    exit_epoch = (
+        state.validators[validator_index].activation_epoch + spec.config.SHARD_COMMITTEE_PERIOD
+    )
+    state.slot = spec.compute_start_slot_at_epoch(exit_epoch - 1)
+    yield "state", state
+
+    store, signed_anchor = get_store_from_state(spec, state)
+    yield get_filename(signed_anchor), signed_anchor
+    yield "blocks", "meta", [{"block": get_filename(signed_anchor)}]
+
+    # The current slot is the first slot of the epoch, still without a block
+    epoch_start_slot = spec.compute_start_slot_at_epoch(exit_epoch)
+    current_time_ms = spec.compute_time_at_slot_ms(store.genesis_time_ms, epoch_start_slot)
+
+    signed_exit = create_signed_voluntary_exit(spec, state, validator_index, epoch=exit_epoch)
+    yield get_filename(signed_exit), signed_exit
+
+    result, reason = run_validate_gossip(
+        spec,
+        seen=seen,
+        store=store,
+        signed_voluntary_exit=signed_exit,
+        current_time_ms=current_time_ms,
+    )
+    assert result == "valid"
+    assert reason is None
+
+    yield (
+        "messages",
+        "meta",
+        [
+            {
+                "current_time_ms": int(current_time_ms),
+                "message": get_filename(signed_exit),
+                "expected": "valid",
+            }
+        ],
+    )
+
+
+@with_all_phases
+@spec_state_test
 @always_bls
 def test_gossip_voluntary_exit__reject_invalid_signature(spec, state):
     """
