@@ -279,7 +279,11 @@ After preparing the `envelope` the builder signs it using:
 def get_execution_payload_envelope_signature(
     state: BeaconState, envelope: ExecutionPayloadEnvelope, privkey: int
 ) -> BLSSignature:
-    domain = get_domain(state, DOMAIN_BEACON_BUILDER, compute_epoch_at_slot(state.slot))
+    domain = compute_domain(
+        DOMAIN_BEACON_BUILDER,
+        compute_fork_version(compute_epoch_at_slot(Slot(envelope.payload.slot_number))),
+        state.genesis_validators_root,
+    )
     signing_root = compute_signing_root(envelope, domain)
     return bls.Sign(privkey, signing_root)
 ```
