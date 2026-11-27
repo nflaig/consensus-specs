@@ -302,7 +302,11 @@ def validate_partial_data_column_sidecar_gossip(
 
         # [REJECT] The proposer signature of signed_block_header is valid
         proposer = state.validators[block_header.proposer_index]
-        domain = get_domain(state, DOMAIN_BEACON_PROPOSER, epoch)
+        domain = compute_domain(
+            DOMAIN_BEACON_PROPOSER,
+            compute_fork_version(epoch),
+            state.genesis_validators_root,
+        )
         signing_root = compute_signing_root(block_header, domain)
         if not bls.Verify(proposer.pubkey, signing_root, header.signed_block_header.signature):
             raise GossipReject("invalid proposer signature on header")
