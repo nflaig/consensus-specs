@@ -111,6 +111,76 @@ def test_gossip_partial_data_column_sidecar__valid_header_only(spec, state):
 
 
 @with_all_phases_from_to(FULU, GLOAS)
+@spec_state_test
+@always_bls
+def test_gossip_partial_data_column_sidecar__valid_with_pre_fork_head_version(spec, state):
+    """
+    Test that a header of the first block of a fork passes gossip validation
+    while the head state still carries the previous fork version.
+    """
+    yield "topic", "meta", "partial_data_column_sidecar"
+
+    state = build_state_with_complete_transition(spec, state)
+    anchor_state = state.copy()
+    yield "state", anchor_state
+
+    seen = get_seen(spec)
+    store, anchor_block = setup_store_with_anchor(spec, state)
+    signed_anchor = wrap_genesis_block(spec, anchor_block)
+    yield get_filename(signed_anchor), signed_anchor
+    yield "blocks", "meta", [{"block": get_filename(signed_anchor)}]
+
+    block, blobs, _, _ = build_block_with_blobs_for_next_slot(spec, state)
+    signed_block = sign_block(spec, state, block, proposer_index=block.proposer_index)
+    sidecars = get_data_column_sidecars(spec, signed_block, blobs)
+    sidecar = sidecars[0]
+    partial = make_partial_sidecar(spec, sidecar, blob_indices=[], include_header=True)
+    group_id = make_partial_data_column_group_id(spec, sidecar)
+    yield get_filename(group_id), group_id
+
+    yield get_filename(partial), partial
+
+    block_header = sidecar.signed_block_header.message
+    current_time_ms = spec.compute_time_at_slot_ms(store.genesis_time_ms, block_header.slot)
+
+    # pyspec process_slots does not apply fork upgrades, so model the fork
+    # boundary by rolling the head state back to the previous fork version.
+    head_state = store.block_states[spec.get_head(store).root]
+    head_state.fork.current_version = head_state.fork.previous_version
+    assert head_state.fork.current_version != spec.compute_fork_version(
+        spec.compute_epoch_at_slot(block_header.slot)
+    )
+
+    column_index = sidecar.index
+    current_time_ms += 500
+    result, reason = run_validate_gossip(
+        spec,
+        seen=seen,
+        store=store,
+        sidecar=partial,
+        current_time_ms=current_time_ms,
+        group_id=group_id,
+        column_index=column_index,
+    )
+    assert result == "valid"
+    assert reason is None
+
+    yield (
+        "messages",
+        "meta",
+        [
+            {
+                "group_id": get_filename(group_id),
+                "column_index": int(column_index),
+                "current_time_ms": int(current_time_ms),
+                "message": get_filename(partial),
+                "expected": "valid",
+            }
+        ],
+    )
+
+
+@with_all_phases_from_to(FULU, GLOAS)
 @spec_configured_state_test(
     {
         "BLOB_SCHEDULE": (frozendict({"EPOCH": 0, "MAX_BLOBS_PER_BLOCK": 15}),),
