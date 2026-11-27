@@ -508,3 +508,59 @@ def test_gossip_sync_committee_message__reject_invalid_signature(spec, state):
             }
         ],
     )
+
+
+@with_altair_and_later
+@spec_state_test
+@always_bls
+def test_gossip_sync_committee_message__valid_with_pre_fork_head_version(spec, state):
+    """
+    A sync committee message is signed with the fork version of its slot even
+    while the head state still carries the previous fork version.
+    """
+    yield "topic", "meta", "sync_committee"
+    yield "state", state
+    store, anchor_block = get_genesis_forkchoice_store_and_block(spec, state)
+    signed_anchor = wrap_genesis_block(spec, anchor_block)
+    yield get_filename(signed_anchor), signed_anchor
+    yield "blocks", "meta", [{"block": get_filename(signed_anchor)}]
+
+    seen = get_seen(spec)
+    validator_index, subnet_id = get_sync_committee_member(spec, state)
+    message = create_valid_sync_committee_message(spec, state, validator_index)
+
+    yield get_filename(message), message
+
+    # Model a head state that has not been upgraded to the fork of the message slot yet
+    head_state = store.block_states[spec.get_head(store).root]
+    head_state.fork.current_version = head_state.fork.previous_version
+    assert head_state.fork.current_version != spec.compute_fork_version(
+        spec.compute_epoch_at_slot(message.slot)
+    )
+
+    current_time_ms = spec.compute_time_at_slot_ms(store.genesis_time_ms, state.slot)
+
+    current_time_ms += 500
+    result, reason = run_validate_gossip(
+        spec,
+        seen=seen,
+        store=store,
+        sync_committee_message=message,
+        current_time_ms=current_time_ms,
+        subnet_id=subnet_id,
+    )
+    assert result == "valid"
+    assert reason is None
+
+    yield (
+        "messages",
+        "meta",
+        [
+            {
+                "current_time_ms": int(current_time_ms),
+                "subnet_id": int(subnet_id),
+                "message": get_filename(message),
+                "expected": "valid",
+            }
+        ],
+    )

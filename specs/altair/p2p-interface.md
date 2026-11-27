@@ -388,8 +388,10 @@ def validate_sync_committee_message_gossip(
 
     # [REJECT] The signature is valid
     validator = state.validators[sync_committee_message.validator_index]
-    domain = get_domain(
-        state, DOMAIN_SYNC_COMMITTEE, compute_epoch_at_slot(sync_committee_message.slot)
+    domain = compute_domain(
+        DOMAIN_SYNC_COMMITTEE,
+        compute_fork_version(compute_epoch_at_slot(sync_committee_message.slot)),
+        state.genesis_validators_root,
     )
     signing_root = compute_signing_root(sync_committee_message.beacon_block_root, domain)
     if not bls.Verify(validator.pubkey, signing_root, sync_committee_message.signature):
