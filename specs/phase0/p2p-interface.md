@@ -945,6 +945,7 @@ def validate_attester_slashing_gossip(
     seen: Seen,
     store: Store,
     attester_slashing: AttesterSlashing,
+    current_time_ms: Uint64,
 ) -> None:
     """
     Validate an AttesterSlashing for gossip propagation.
@@ -966,7 +967,10 @@ def validate_attester_slashing_gossip(
     if not is_slashable_attestation_data(attestation_1.data, attestation_2.data):
         raise GossipReject("attestation data is not slashable")
 
-    state = store.block_states[get_head(store).root]
+    current_slot = compute_slot_at_time_ms(store.genesis_time_ms, current_time_ms)
+    state = store.block_states[get_head(store).root].copy()
+    if state.slot < current_slot:
+        process_slots(state, current_slot)
 
     # [REJECT] All validator indices in the first indexed attestation are valid
     if any(index >= len(state.validators) for index in attestation_1.attesting_indices):
