@@ -886,6 +886,7 @@ def validate_proposer_slashing_gossip(
     seen: Seen,
     store: Store,
     proposer_slashing: ProposerSlashing,
+    current_time_ms: Uint64,
 ) -> None:
     """
     Validate a ProposerSlashing for gossip propagation.
@@ -911,7 +912,10 @@ def validate_proposer_slashing_gossip(
     if header_1 == header_2:
         raise GossipReject("headers are not different")
 
-    state = store.block_states[get_head(store).root]
+    current_slot = compute_slot_at_time_ms(store.genesis_time_ms, current_time_ms)
+    state = store.block_states[get_head(store).root].copy()
+    if state.slot < current_slot:
+        process_slots(state, current_slot)
 
     # [REJECT] The proposer index is a valid validator index
     if proposer_index >= len(state.validators):
