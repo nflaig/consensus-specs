@@ -3,8 +3,10 @@ from eth_consensus_specs.test.context import (
     spec_state_test,
     with_all_phases,
 )
+from eth_consensus_specs.test.helpers.attestations import sign_indexed_attestation
 from eth_consensus_specs.test.helpers.attester_slashings import (
     get_valid_attester_slashing,
+    get_valid_attester_slashing_by_indices,
 )
 from eth_consensus_specs.test.helpers.gossip import (
     get_filename,
@@ -26,6 +28,7 @@ def test_gossip_attester_slashing__valid(spec, state):
     store, signed_anchor = get_store_from_state(spec, state)
     yield get_filename(signed_anchor), signed_anchor
     yield "blocks", "meta", [{"block": get_filename(signed_anchor)}]
+    current_time_ms = spec.compute_time_at_slot_ms(store.genesis_time_ms, state.slot)
 
     seen = get_seen(spec)
 
@@ -35,7 +38,11 @@ def test_gossip_attester_slashing__valid(spec, state):
     yield get_filename(attester_slashing), attester_slashing
 
     result, reason = run_validate_gossip(
-        spec, seen=seen, store=store, attester_slashing=attester_slashing
+        spec,
+        seen=seen,
+        store=store,
+        attester_slashing=attester_slashing,
+        current_time_ms=current_time_ms,
     )
     assert result == "valid"
     assert reason is None
@@ -43,7 +50,13 @@ def test_gossip_attester_slashing__valid(spec, state):
     yield (
         "messages",
         "meta",
-        [{"message": get_filename(attester_slashing), "expected": "valid"}],
+        [
+            {
+                "current_time_ms": int(current_time_ms),
+                "message": get_filename(attester_slashing),
+                "expected": "valid",
+            }
+        ],
     )
 
 
@@ -59,6 +72,7 @@ def test_gossip_attester_slashing__ignore_already_seen(spec, state):
     store, signed_anchor = get_store_from_state(spec, state)
     yield get_filename(signed_anchor), signed_anchor
     yield "blocks", "meta", [{"block": get_filename(signed_anchor)}]
+    current_time_ms = spec.compute_time_at_slot_ms(store.genesis_time_ms, state.slot)
 
     messages = []
     seen = get_seen(spec)
@@ -70,20 +84,35 @@ def test_gossip_attester_slashing__ignore_already_seen(spec, state):
 
     # First validation should pass
     result, reason = run_validate_gossip(
-        spec, seen=seen, store=store, attester_slashing=attester_slashing
+        spec,
+        seen=seen,
+        store=store,
+        attester_slashing=attester_slashing,
+        current_time_ms=current_time_ms,
     )
     assert result == "valid"
     assert reason is None
-    messages.append({"message": get_filename(attester_slashing), "expected": "valid"})
+    messages.append(
+        {
+            "current_time_ms": int(current_time_ms),
+            "message": get_filename(attester_slashing),
+            "expected": "valid",
+        }
+    )
 
     # Second validation should be ignored (all indices already seen)
     result, reason = run_validate_gossip(
-        spec, seen=seen, store=store, attester_slashing=attester_slashing
+        spec,
+        seen=seen,
+        store=store,
+        attester_slashing=attester_slashing,
+        current_time_ms=current_time_ms,
     )
     assert result == "ignore"
     assert reason == "all attester slashing indices already seen"
     messages.append(
         {
+            "current_time_ms": int(current_time_ms),
             "message": get_filename(attester_slashing),
             "expected": "ignore",
             "reason": reason,
@@ -105,6 +134,7 @@ def test_gossip_attester_slashing__reject_not_slashable_data(spec, state):
     store, signed_anchor = get_store_from_state(spec, state)
     yield get_filename(signed_anchor), signed_anchor
     yield "blocks", "meta", [{"block": get_filename(signed_anchor)}]
+    current_time_ms = spec.compute_time_at_slot_ms(store.genesis_time_ms, state.slot)
 
     seen = get_seen(spec)
 
@@ -117,7 +147,11 @@ def test_gossip_attester_slashing__reject_not_slashable_data(spec, state):
     yield get_filename(attester_slashing), attester_slashing
 
     result, reason = run_validate_gossip(
-        spec, seen=seen, store=store, attester_slashing=attester_slashing
+        spec,
+        seen=seen,
+        store=store,
+        attester_slashing=attester_slashing,
+        current_time_ms=current_time_ms,
     )
     assert result == "reject"
     assert reason == "attestation data is not slashable"
@@ -127,6 +161,7 @@ def test_gossip_attester_slashing__reject_not_slashable_data(spec, state):
         "meta",
         [
             {
+                "current_time_ms": int(current_time_ms),
                 "message": get_filename(attester_slashing),
                 "expected": "reject",
                 "reason": reason,
@@ -148,6 +183,7 @@ def test_gossip_attester_slashing__reject_invalid_attestation_1(spec, state):
     store, signed_anchor = get_store_from_state(spec, state)
     yield get_filename(signed_anchor), signed_anchor
     yield "blocks", "meta", [{"block": get_filename(signed_anchor)}]
+    current_time_ms = spec.compute_time_at_slot_ms(store.genesis_time_ms, state.slot)
 
     seen = get_seen(spec)
 
@@ -157,7 +193,11 @@ def test_gossip_attester_slashing__reject_invalid_attestation_1(spec, state):
     yield get_filename(attester_slashing), attester_slashing
 
     result, reason = run_validate_gossip(
-        spec, seen=seen, store=store, attester_slashing=attester_slashing
+        spec,
+        seen=seen,
+        store=store,
+        attester_slashing=attester_slashing,
+        current_time_ms=current_time_ms,
     )
     assert result == "reject"
     assert reason == "invalid indexed attestation 1"
@@ -167,6 +207,7 @@ def test_gossip_attester_slashing__reject_invalid_attestation_1(spec, state):
         "meta",
         [
             {
+                "current_time_ms": int(current_time_ms),
                 "message": get_filename(attester_slashing),
                 "expected": "reject",
                 "reason": reason,
@@ -188,6 +229,7 @@ def test_gossip_attester_slashing__reject_invalid_attestation_2(spec, state):
     store, signed_anchor = get_store_from_state(spec, state)
     yield get_filename(signed_anchor), signed_anchor
     yield "blocks", "meta", [{"block": get_filename(signed_anchor)}]
+    current_time_ms = spec.compute_time_at_slot_ms(store.genesis_time_ms, state.slot)
 
     seen = get_seen(spec)
 
@@ -197,7 +239,11 @@ def test_gossip_attester_slashing__reject_invalid_attestation_2(spec, state):
     yield get_filename(attester_slashing), attester_slashing
 
     result, reason = run_validate_gossip(
-        spec, seen=seen, store=store, attester_slashing=attester_slashing
+        spec,
+        seen=seen,
+        store=store,
+        attester_slashing=attester_slashing,
+        current_time_ms=current_time_ms,
     )
     assert result == "reject"
     assert reason == "invalid indexed attestation 2"
@@ -207,6 +253,7 @@ def test_gossip_attester_slashing__reject_invalid_attestation_2(spec, state):
         "meta",
         [
             {
+                "current_time_ms": int(current_time_ms),
                 "message": get_filename(attester_slashing),
                 "expected": "reject",
                 "reason": reason,
@@ -227,6 +274,7 @@ def test_gossip_attester_slashing__reject_attesting_index_out_of_range_1(spec, s
     store, signed_anchor = get_store_from_state(spec, state)
     yield get_filename(signed_anchor), signed_anchor
     yield "blocks", "meta", [{"block": get_filename(signed_anchor)}]
+    current_time_ms = spec.compute_time_at_slot_ms(store.genesis_time_ms, state.slot)
 
     seen = get_seen(spec)
 
@@ -239,7 +287,11 @@ def test_gossip_attester_slashing__reject_attesting_index_out_of_range_1(spec, s
     yield get_filename(attester_slashing), attester_slashing
 
     result, reason = run_validate_gossip(
-        spec, seen=seen, store=store, attester_slashing=attester_slashing
+        spec,
+        seen=seen,
+        store=store,
+        attester_slashing=attester_slashing,
+        current_time_ms=current_time_ms,
     )
     assert result == "reject"
     assert reason == "validator index out of range in indexed attestation 1"
@@ -249,6 +301,7 @@ def test_gossip_attester_slashing__reject_attesting_index_out_of_range_1(spec, s
         "meta",
         [
             {
+                "current_time_ms": int(current_time_ms),
                 "message": get_filename(attester_slashing),
                 "expected": "reject",
                 "reason": reason,
@@ -269,6 +322,7 @@ def test_gossip_attester_slashing__reject_attesting_index_out_of_range_2(spec, s
     store, signed_anchor = get_store_from_state(spec, state)
     yield get_filename(signed_anchor), signed_anchor
     yield "blocks", "meta", [{"block": get_filename(signed_anchor)}]
+    current_time_ms = spec.compute_time_at_slot_ms(store.genesis_time_ms, state.slot)
 
     seen = get_seen(spec)
 
@@ -283,7 +337,11 @@ def test_gossip_attester_slashing__reject_attesting_index_out_of_range_2(spec, s
     yield get_filename(attester_slashing), attester_slashing
 
     result, reason = run_validate_gossip(
-        spec, seen=seen, store=store, attester_slashing=attester_slashing
+        spec,
+        seen=seen,
+        store=store,
+        attester_slashing=attester_slashing,
+        current_time_ms=current_time_ms,
     )
     assert result == "reject"
     assert reason == "validator index out of range in indexed attestation 2"
@@ -293,6 +351,7 @@ def test_gossip_attester_slashing__reject_attesting_index_out_of_range_2(spec, s
         "meta",
         [
             {
+                "current_time_ms": int(current_time_ms),
                 "message": get_filename(attester_slashing),
                 "expected": "reject",
                 "reason": reason,
@@ -313,6 +372,7 @@ def test_gossip_attester_slashing__ignore_empty_attesting_indices_1(spec, state)
     store, signed_anchor = get_store_from_state(spec, state)
     yield get_filename(signed_anchor), signed_anchor
     yield "blocks", "meta", [{"block": get_filename(signed_anchor)}]
+    current_time_ms = spec.compute_time_at_slot_ms(store.genesis_time_ms, state.slot)
 
     seen = get_seen(spec)
 
@@ -322,7 +382,11 @@ def test_gossip_attester_slashing__ignore_empty_attesting_indices_1(spec, state)
     yield get_filename(attester_slashing), attester_slashing
 
     result, reason = run_validate_gossip(
-        spec, seen=seen, store=store, attester_slashing=attester_slashing
+        spec,
+        seen=seen,
+        store=store,
+        attester_slashing=attester_slashing,
+        current_time_ms=current_time_ms,
     )
     assert result == "ignore"
     assert reason == "all attester slashing indices already seen"
@@ -332,6 +396,7 @@ def test_gossip_attester_slashing__ignore_empty_attesting_indices_1(spec, state)
         "meta",
         [
             {
+                "current_time_ms": int(current_time_ms),
                 "message": get_filename(attester_slashing),
                 "expected": "ignore",
                 "reason": reason,
@@ -352,6 +417,7 @@ def test_gossip_attester_slashing__ignore_empty_attesting_indices_2(spec, state)
     store, signed_anchor = get_store_from_state(spec, state)
     yield get_filename(signed_anchor), signed_anchor
     yield "blocks", "meta", [{"block": get_filename(signed_anchor)}]
+    current_time_ms = spec.compute_time_at_slot_ms(store.genesis_time_ms, state.slot)
 
     seen = get_seen(spec)
 
@@ -361,7 +427,11 @@ def test_gossip_attester_slashing__ignore_empty_attesting_indices_2(spec, state)
     yield get_filename(attester_slashing), attester_slashing
 
     result, reason = run_validate_gossip(
-        spec, seen=seen, store=store, attester_slashing=attester_slashing
+        spec,
+        seen=seen,
+        store=store,
+        attester_slashing=attester_slashing,
+        current_time_ms=current_time_ms,
     )
     assert result == "ignore"
     assert reason == "all attester slashing indices already seen"
@@ -371,6 +441,7 @@ def test_gossip_attester_slashing__ignore_empty_attesting_indices_2(spec, state)
         "meta",
         [
             {
+                "current_time_ms": int(current_time_ms),
                 "message": get_filename(attester_slashing),
                 "expected": "ignore",
                 "reason": reason,
@@ -391,6 +462,7 @@ def test_gossip_attester_slashing__reject_unsorted_indices_1(spec, state):
     store, signed_anchor = get_store_from_state(spec, state)
     yield get_filename(signed_anchor), signed_anchor
     yield "blocks", "meta", [{"block": get_filename(signed_anchor)}]
+    current_time_ms = spec.compute_time_at_slot_ms(store.genesis_time_ms, state.slot)
 
     seen = get_seen(spec)
 
@@ -410,7 +482,11 @@ def test_gossip_attester_slashing__reject_unsorted_indices_1(spec, state):
     yield get_filename(attester_slashing), attester_slashing
 
     result, reason = run_validate_gossip(
-        spec, seen=seen, store=store, attester_slashing=attester_slashing
+        spec,
+        seen=seen,
+        store=store,
+        attester_slashing=attester_slashing,
+        current_time_ms=current_time_ms,
     )
     assert result == "reject"
     assert reason == "invalid indexed attestation 1"
@@ -420,6 +496,7 @@ def test_gossip_attester_slashing__reject_unsorted_indices_1(spec, state):
         "meta",
         [
             {
+                "current_time_ms": int(current_time_ms),
                 "message": get_filename(attester_slashing),
                 "expected": "reject",
                 "reason": reason,
@@ -440,6 +517,7 @@ def test_gossip_attester_slashing__reject_unsorted_indices_2(spec, state):
     store, signed_anchor = get_store_from_state(spec, state)
     yield get_filename(signed_anchor), signed_anchor
     yield "blocks", "meta", [{"block": get_filename(signed_anchor)}]
+    current_time_ms = spec.compute_time_at_slot_ms(store.genesis_time_ms, state.slot)
 
     seen = get_seen(spec)
 
@@ -454,7 +532,11 @@ def test_gossip_attester_slashing__reject_unsorted_indices_2(spec, state):
     yield get_filename(attester_slashing), attester_slashing
 
     result, reason = run_validate_gossip(
-        spec, seen=seen, store=store, attester_slashing=attester_slashing
+        spec,
+        seen=seen,
+        store=store,
+        attester_slashing=attester_slashing,
+        current_time_ms=current_time_ms,
     )
     assert result == "reject"
     assert reason == "invalid indexed attestation 2"
@@ -464,6 +546,7 @@ def test_gossip_attester_slashing__reject_unsorted_indices_2(spec, state):
         "meta",
         [
             {
+                "current_time_ms": int(current_time_ms),
                 "message": get_filename(attester_slashing),
                 "expected": "reject",
                 "reason": reason,
@@ -497,10 +580,15 @@ def test_gossip_attester_slashing__reject_no_slashable_validators(spec, state):
     store, signed_anchor = get_store_from_state(spec, state)
     yield get_filename(signed_anchor), signed_anchor
     yield "blocks", "meta", [{"block": get_filename(signed_anchor)}]
+    current_time_ms = spec.compute_time_at_slot_ms(store.genesis_time_ms, state.slot)
     yield get_filename(attester_slashing), attester_slashing
 
     result, reason = run_validate_gossip(
-        spec, seen=seen, store=store, attester_slashing=attester_slashing
+        spec,
+        seen=seen,
+        store=store,
+        attester_slashing=attester_slashing,
+        current_time_ms=current_time_ms,
     )
     assert result == "reject"
     assert reason == "no slashable validators in intersection"
@@ -510,6 +598,113 @@ def test_gossip_attester_slashing__reject_no_slashable_validators(spec, state):
         "meta",
         [
             {
+                "current_time_ms": int(current_time_ms),
+                "message": get_filename(attester_slashing),
+                "expected": "reject",
+                "reason": reason,
+            }
+        ],
+    )
+
+
+@with_all_phases
+@spec_state_test
+def test_gossip_attester_slashing__valid_activation_epoch_at_clock_epoch(spec, state):
+    """
+    Test that an attester slashing is validated against the head state advanced to
+    the current slot: an attester whose activation epoch is the clock epoch is
+    slashable, although the head block is in the previous epoch.
+    """
+    yield "topic", "meta", "attester_slashing"
+
+    seen = get_seen(spec)
+
+    clock_epoch = spec.get_current_epoch(state) + 1
+    current_slot = spec.compute_start_slot_at_epoch(clock_epoch)
+    validator_index = spec.get_active_validator_indices(state, spec.get_current_epoch(state))[-1]
+    attester_slashing = get_valid_attester_slashing_by_indices(spec, state, [validator_index])
+    for indexed_attestation in (attester_slashing.attestation_1, attester_slashing.attestation_2):
+        indexed_attestation.data.slot = current_slot
+        indexed_attestation.data.target.epoch = clock_epoch
+        sign_indexed_attestation(spec, state, indexed_attestation)
+    state.validators[validator_index].activation_epoch = clock_epoch
+
+    yield "state", state
+
+    store, signed_anchor = get_store_from_state(spec, state)
+    yield get_filename(signed_anchor), signed_anchor
+    yield "blocks", "meta", [{"block": get_filename(signed_anchor)}]
+    current_time_ms = spec.compute_time_at_slot_ms(store.genesis_time_ms, current_slot)
+    yield get_filename(attester_slashing), attester_slashing
+
+    result, reason = run_validate_gossip(
+        spec,
+        seen=seen,
+        store=store,
+        attester_slashing=attester_slashing,
+        current_time_ms=current_time_ms,
+    )
+    assert result == "valid"
+    assert reason is None
+
+    yield (
+        "messages",
+        "meta",
+        [
+            {
+                "current_time_ms": int(current_time_ms),
+                "message": get_filename(attester_slashing),
+                "expected": "valid",
+            }
+        ],
+    )
+
+
+@with_all_phases
+@spec_state_test
+def test_gossip_attester_slashing__reject_withdrawable_epoch_at_clock_epoch(spec, state):
+    """
+    Test that an attester slashing is validated against the head state advanced to
+    the current slot: an attester whose withdrawable epoch is the clock epoch is not
+    slashable, although the head block is in the previous epoch.
+    """
+    yield "topic", "meta", "attester_slashing"
+
+    seen = get_seen(spec)
+
+    clock_epoch = spec.get_current_epoch(state) + 1
+    current_slot = spec.compute_start_slot_at_epoch(clock_epoch)
+    validator_index = spec.get_active_validator_indices(state, spec.get_current_epoch(state))[-1]
+    attester_slashing = get_valid_attester_slashing_by_indices(
+        spec, state, [validator_index], signed_1=True, signed_2=True
+    )
+    state.validators[validator_index].exit_epoch = clock_epoch
+    state.validators[validator_index].withdrawable_epoch = clock_epoch
+
+    yield "state", state
+
+    store, signed_anchor = get_store_from_state(spec, state)
+    yield get_filename(signed_anchor), signed_anchor
+    yield "blocks", "meta", [{"block": get_filename(signed_anchor)}]
+    current_time_ms = spec.compute_time_at_slot_ms(store.genesis_time_ms, current_slot)
+    yield get_filename(attester_slashing), attester_slashing
+
+    result, reason = run_validate_gossip(
+        spec,
+        seen=seen,
+        store=store,
+        attester_slashing=attester_slashing,
+        current_time_ms=current_time_ms,
+    )
+    assert result == "reject"
+    assert reason == "no slashable validators in intersection"
+
+    yield (
+        "messages",
+        "meta",
+        [
+            {
+                "current_time_ms": int(current_time_ms),
                 "message": get_filename(attester_slashing),
                 "expected": "reject",
                 "reason": reason,
