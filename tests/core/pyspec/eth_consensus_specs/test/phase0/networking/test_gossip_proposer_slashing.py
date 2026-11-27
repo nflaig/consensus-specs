@@ -26,6 +26,7 @@ def test_gossip_proposer_slashing__valid(spec, state):
     store, signed_anchor = get_store_from_state(spec, state)
     yield get_filename(signed_anchor), signed_anchor
     yield "blocks", "meta", [{"block": get_filename(signed_anchor)}]
+    current_time_ms = spec.compute_time_at_slot_ms(store.genesis_time_ms, state.slot)
 
     seen = get_seen(spec)
 
@@ -35,7 +36,11 @@ def test_gossip_proposer_slashing__valid(spec, state):
     yield get_filename(proposer_slashing), proposer_slashing
 
     result, reason = run_validate_gossip(
-        spec, seen=seen, store=store, proposer_slashing=proposer_slashing
+        spec,
+        seen=seen,
+        store=store,
+        proposer_slashing=proposer_slashing,
+        current_time_ms=current_time_ms,
     )
     assert result == "valid"
     assert reason is None
@@ -43,7 +48,13 @@ def test_gossip_proposer_slashing__valid(spec, state):
     yield (
         "messages",
         "meta",
-        [{"message": get_filename(proposer_slashing), "expected": "valid"}],
+        [
+            {
+                "current_time_ms": int(current_time_ms),
+                "message": get_filename(proposer_slashing),
+                "expected": "valid",
+            }
+        ],
     )
 
 
@@ -59,6 +70,7 @@ def test_gossip_proposer_slashing__ignore_already_seen(spec, state):
     store, signed_anchor = get_store_from_state(spec, state)
     yield get_filename(signed_anchor), signed_anchor
     yield "blocks", "meta", [{"block": get_filename(signed_anchor)}]
+    current_time_ms = spec.compute_time_at_slot_ms(store.genesis_time_ms, state.slot)
 
     messages = []
     seen = get_seen(spec)
@@ -70,20 +82,35 @@ def test_gossip_proposer_slashing__ignore_already_seen(spec, state):
 
     # First validation should pass
     result, reason = run_validate_gossip(
-        spec, seen=seen, store=store, proposer_slashing=proposer_slashing
+        spec,
+        seen=seen,
+        store=store,
+        proposer_slashing=proposer_slashing,
+        current_time_ms=current_time_ms,
     )
     assert result == "valid"
     assert reason is None
-    messages.append({"message": get_filename(proposer_slashing), "expected": "valid"})
+    messages.append(
+        {
+            "current_time_ms": int(current_time_ms),
+            "message": get_filename(proposer_slashing),
+            "expected": "valid",
+        }
+    )
 
     # Second validation should be ignored
     result, reason = run_validate_gossip(
-        spec, seen=seen, store=store, proposer_slashing=proposer_slashing
+        spec,
+        seen=seen,
+        store=store,
+        proposer_slashing=proposer_slashing,
+        current_time_ms=current_time_ms,
     )
     assert result == "ignore"
     assert reason == "already seen proposer slashing for this proposer"
     messages.append(
         {
+            "current_time_ms": int(current_time_ms),
             "message": get_filename(proposer_slashing),
             "expected": "ignore",
             "reason": reason,
@@ -105,6 +132,7 @@ def test_gossip_proposer_slashing__reject_slots_not_matching(spec, state):
     store, signed_anchor = get_store_from_state(spec, state)
     yield get_filename(signed_anchor), signed_anchor
     yield "blocks", "meta", [{"block": get_filename(signed_anchor)}]
+    current_time_ms = spec.compute_time_at_slot_ms(store.genesis_time_ms, state.slot)
 
     seen = get_seen(spec)
 
@@ -119,7 +147,11 @@ def test_gossip_proposer_slashing__reject_slots_not_matching(spec, state):
     yield get_filename(proposer_slashing), proposer_slashing
 
     result, reason = run_validate_gossip(
-        spec, seen=seen, store=store, proposer_slashing=proposer_slashing
+        spec,
+        seen=seen,
+        store=store,
+        proposer_slashing=proposer_slashing,
+        current_time_ms=current_time_ms,
     )
     assert result == "reject"
     assert reason == "header slots do not match"
@@ -129,6 +161,7 @@ def test_gossip_proposer_slashing__reject_slots_not_matching(spec, state):
         "meta",
         [
             {
+                "current_time_ms": int(current_time_ms),
                 "message": get_filename(proposer_slashing),
                 "expected": "reject",
                 "reason": reason,
@@ -149,6 +182,7 @@ def test_gossip_proposer_slashing__reject_proposer_indices_not_matching(spec, st
     store, signed_anchor = get_store_from_state(spec, state)
     yield get_filename(signed_anchor), signed_anchor
     yield "blocks", "meta", [{"block": get_filename(signed_anchor)}]
+    current_time_ms = spec.compute_time_at_slot_ms(store.genesis_time_ms, state.slot)
 
     seen = get_seen(spec)
 
@@ -163,7 +197,11 @@ def test_gossip_proposer_slashing__reject_proposer_indices_not_matching(spec, st
     yield get_filename(proposer_slashing), proposer_slashing
 
     result, reason = run_validate_gossip(
-        spec, seen=seen, store=store, proposer_slashing=proposer_slashing
+        spec,
+        seen=seen,
+        store=store,
+        proposer_slashing=proposer_slashing,
+        current_time_ms=current_time_ms,
     )
     assert result == "reject"
     assert reason == "header proposer indices do not match"
@@ -173,6 +211,7 @@ def test_gossip_proposer_slashing__reject_proposer_indices_not_matching(spec, st
         "meta",
         [
             {
+                "current_time_ms": int(current_time_ms),
                 "message": get_filename(proposer_slashing),
                 "expected": "reject",
                 "reason": reason,
@@ -193,6 +232,7 @@ def test_gossip_proposer_slashing__reject_headers_identical(spec, state):
     store, signed_anchor = get_store_from_state(spec, state)
     yield get_filename(signed_anchor), signed_anchor
     yield "blocks", "meta", [{"block": get_filename(signed_anchor)}]
+    current_time_ms = spec.compute_time_at_slot_ms(store.genesis_time_ms, state.slot)
 
     seen = get_seen(spec)
 
@@ -205,7 +245,11 @@ def test_gossip_proposer_slashing__reject_headers_identical(spec, state):
     yield get_filename(proposer_slashing), proposer_slashing
 
     result, reason = run_validate_gossip(
-        spec, seen=seen, store=store, proposer_slashing=proposer_slashing
+        spec,
+        seen=seen,
+        store=store,
+        proposer_slashing=proposer_slashing,
+        current_time_ms=current_time_ms,
     )
     assert result == "reject"
     assert reason == "headers are not different"
@@ -215,6 +259,7 @@ def test_gossip_proposer_slashing__reject_headers_identical(spec, state):
         "meta",
         [
             {
+                "current_time_ms": int(current_time_ms),
                 "message": get_filename(proposer_slashing),
                 "expected": "reject",
                 "reason": reason,
@@ -235,6 +280,7 @@ def test_gossip_proposer_slashing__reject_proposer_index_out_of_range(spec, stat
     store, signed_anchor = get_store_from_state(spec, state)
     yield get_filename(signed_anchor), signed_anchor
     yield "blocks", "meta", [{"block": get_filename(signed_anchor)}]
+    current_time_ms = spec.compute_time_at_slot_ms(store.genesis_time_ms, state.slot)
 
     seen = get_seen(spec)
 
@@ -249,7 +295,11 @@ def test_gossip_proposer_slashing__reject_proposer_index_out_of_range(spec, stat
     yield get_filename(proposer_slashing), proposer_slashing
 
     result, reason = run_validate_gossip(
-        spec, seen=seen, store=store, proposer_slashing=proposer_slashing
+        spec,
+        seen=seen,
+        store=store,
+        proposer_slashing=proposer_slashing,
+        current_time_ms=current_time_ms,
     )
     assert result == "reject"
     assert reason == "proposer index out of range"
@@ -259,6 +309,7 @@ def test_gossip_proposer_slashing__reject_proposer_index_out_of_range(spec, stat
         "meta",
         [
             {
+                "current_time_ms": int(current_time_ms),
                 "message": get_filename(proposer_slashing),
                 "expected": "reject",
                 "reason": reason,
@@ -289,10 +340,15 @@ def test_gossip_proposer_slashing__reject_proposer_not_slashable(spec, state):
     store, signed_anchor = get_store_from_state(spec, state)
     yield get_filename(signed_anchor), signed_anchor
     yield "blocks", "meta", [{"block": get_filename(signed_anchor)}]
+    current_time_ms = spec.compute_time_at_slot_ms(store.genesis_time_ms, state.slot)
     yield get_filename(proposer_slashing), proposer_slashing
 
     result, reason = run_validate_gossip(
-        spec, seen=seen, store=store, proposer_slashing=proposer_slashing
+        spec,
+        seen=seen,
+        store=store,
+        proposer_slashing=proposer_slashing,
+        current_time_ms=current_time_ms,
     )
     assert result == "reject"
     assert reason == "proposer is not slashable"
@@ -302,6 +358,7 @@ def test_gossip_proposer_slashing__reject_proposer_not_slashable(spec, state):
         "meta",
         [
             {
+                "current_time_ms": int(current_time_ms),
                 "message": get_filename(proposer_slashing),
                 "expected": "reject",
                 "reason": reason,
@@ -323,6 +380,7 @@ def test_gossip_proposer_slashing__reject_invalid_signature_1(spec, state):
     store, signed_anchor = get_store_from_state(spec, state)
     yield get_filename(signed_anchor), signed_anchor
     yield "blocks", "meta", [{"block": get_filename(signed_anchor)}]
+    current_time_ms = spec.compute_time_at_slot_ms(store.genesis_time_ms, state.slot)
 
     seen = get_seen(spec)
 
@@ -332,7 +390,11 @@ def test_gossip_proposer_slashing__reject_invalid_signature_1(spec, state):
     yield get_filename(proposer_slashing), proposer_slashing
 
     result, reason = run_validate_gossip(
-        spec, seen=seen, store=store, proposer_slashing=proposer_slashing
+        spec,
+        seen=seen,
+        store=store,
+        proposer_slashing=proposer_slashing,
+        current_time_ms=current_time_ms,
     )
     assert result == "reject"
     assert reason == "invalid proposer slashing signature"
@@ -342,6 +404,7 @@ def test_gossip_proposer_slashing__reject_invalid_signature_1(spec, state):
         "meta",
         [
             {
+                "current_time_ms": int(current_time_ms),
                 "message": get_filename(proposer_slashing),
                 "expected": "reject",
                 "reason": reason,
@@ -363,6 +426,7 @@ def test_gossip_proposer_slashing__reject_invalid_signature_2(spec, state):
     store, signed_anchor = get_store_from_state(spec, state)
     yield get_filename(signed_anchor), signed_anchor
     yield "blocks", "meta", [{"block": get_filename(signed_anchor)}]
+    current_time_ms = spec.compute_time_at_slot_ms(store.genesis_time_ms, state.slot)
 
     seen = get_seen(spec)
 
@@ -372,7 +436,11 @@ def test_gossip_proposer_slashing__reject_invalid_signature_2(spec, state):
     yield get_filename(proposer_slashing), proposer_slashing
 
     result, reason = run_validate_gossip(
-        spec, seen=seen, store=store, proposer_slashing=proposer_slashing
+        spec,
+        seen=seen,
+        store=store,
+        proposer_slashing=proposer_slashing,
+        current_time_ms=current_time_ms,
     )
     assert result == "reject"
     assert reason == "invalid proposer slashing signature"
@@ -382,6 +450,109 @@ def test_gossip_proposer_slashing__reject_invalid_signature_2(spec, state):
         "meta",
         [
             {
+                "current_time_ms": int(current_time_ms),
+                "message": get_filename(proposer_slashing),
+                "expected": "reject",
+                "reason": reason,
+            }
+        ],
+    )
+
+
+@with_all_phases
+@spec_state_test
+def test_gossip_proposer_slashing__valid_activation_epoch_at_clock_epoch(spec, state):
+    """
+    Test that a proposer slashing is validated against the head state advanced to
+    the current slot: a proposer whose activation epoch is the clock epoch is
+    slashable, although the head block is in the previous epoch.
+    """
+    yield "topic", "meta", "proposer_slashing"
+
+    seen = get_seen(spec)
+
+    clock_epoch = spec.get_current_epoch(state) + 1
+    current_slot = spec.compute_start_slot_at_epoch(clock_epoch)
+    proposer_slashing = get_valid_proposer_slashing(
+        spec, state, slot=current_slot, signed_1=True, signed_2=True
+    )
+    proposer_index = proposer_slashing.signed_header_1.message.proposer_index
+    state.validators[proposer_index].activation_epoch = clock_epoch
+
+    yield "state", state
+
+    store, signed_anchor = get_store_from_state(spec, state)
+    yield get_filename(signed_anchor), signed_anchor
+    yield "blocks", "meta", [{"block": get_filename(signed_anchor)}]
+    current_time_ms = spec.compute_time_at_slot_ms(store.genesis_time_ms, current_slot)
+    yield get_filename(proposer_slashing), proposer_slashing
+
+    result, reason = run_validate_gossip(
+        spec,
+        seen=seen,
+        store=store,
+        proposer_slashing=proposer_slashing,
+        current_time_ms=current_time_ms,
+    )
+    assert result == "valid"
+    assert reason is None
+
+    yield (
+        "messages",
+        "meta",
+        [
+            {
+                "current_time_ms": int(current_time_ms),
+                "message": get_filename(proposer_slashing),
+                "expected": "valid",
+            }
+        ],
+    )
+
+
+@with_all_phases
+@spec_state_test
+def test_gossip_proposer_slashing__reject_withdrawable_epoch_at_clock_epoch(spec, state):
+    """
+    Test that a proposer slashing is validated against the head state advanced to
+    the current slot: a proposer whose withdrawable epoch is the clock epoch is not
+    slashable, although the head block is in the previous epoch.
+    """
+    yield "topic", "meta", "proposer_slashing"
+
+    seen = get_seen(spec)
+
+    clock_epoch = spec.get_current_epoch(state) + 1
+    current_slot = spec.compute_start_slot_at_epoch(clock_epoch)
+    proposer_slashing = get_valid_proposer_slashing(spec, state, signed_1=True, signed_2=True)
+    proposer_index = proposer_slashing.signed_header_1.message.proposer_index
+    state.validators[proposer_index].exit_epoch = clock_epoch
+    state.validators[proposer_index].withdrawable_epoch = clock_epoch
+
+    yield "state", state
+
+    store, signed_anchor = get_store_from_state(spec, state)
+    yield get_filename(signed_anchor), signed_anchor
+    yield "blocks", "meta", [{"block": get_filename(signed_anchor)}]
+    current_time_ms = spec.compute_time_at_slot_ms(store.genesis_time_ms, current_slot)
+    yield get_filename(proposer_slashing), proposer_slashing
+
+    result, reason = run_validate_gossip(
+        spec,
+        seen=seen,
+        store=store,
+        proposer_slashing=proposer_slashing,
+        current_time_ms=current_time_ms,
+    )
+    assert result == "reject"
+    assert reason == "proposer is not slashable"
+
+    yield (
+        "messages",
+        "meta",
+        [
+            {
+                "current_time_ms": int(current_time_ms),
                 "message": get_filename(proposer_slashing),
                 "expected": "reject",
                 "reason": reason,
