@@ -1413,20 +1413,6 @@ def validate_beacon_attestation_gossip(
     if block_root not in store.block_states:
         raise GossipReject("block being voted for failed validation")
 
-    state = store.block_states[get_head(store).root]
-
-    # [REJECT] The committee index is within the expected range
-    committees_per_slot = get_committee_count_per_slot(state, target_epoch)
-    if committee_index >= committees_per_slot:
-        raise GossipReject("committee index out of range")
-
-    # [REJECT] The attestation is for the correct subnet
-    expected_subnet = compute_subnet_for_attestation(
-        committees_per_slot, data.slot, committee_index
-    )
-    if expected_subnet != subnet_id:
-        raise GossipReject("attestation is for wrong subnet")
-
     # [IGNORE] The attestation's slot is not from a future slot
     # (MAY be queued for processing at the appropriate slot)
     if is_future_slot(store, data.slot, current_time_ms):
@@ -1441,6 +1427,24 @@ def validate_beacon_attestation_gossip(
     if target_epoch != compute_epoch_at_slot(data.slot):
         raise GossipReject("attestation epoch does not match target epoch")
 
+    # The committees are those of the target epoch on the voted block's branch
+    state = store.block_states[block_root].copy()
+    target_slot = compute_start_slot_at_epoch(target_epoch)
+    if state.slot < target_slot:
+        process_slots(state, target_slot)
+
+    # [REJECT] The committee index is within the expected range
+    committees_per_slot = get_committee_count_per_slot(state, target_epoch)
+    if committee_index >= committees_per_slot:
+        raise GossipReject("committee index out of range")
+
+    # [REJECT] The attestation is for the correct subnet
+    expected_subnet = compute_subnet_for_attestation(
+        committees_per_slot, data.slot, committee_index
+    )
+    if expected_subnet != subnet_id:
+        raise GossipReject("attestation is for wrong subnet")
+
     # [REJECT] The attester is a member of the committee
     committee = get_beacon_committee(state, data.slot, committee_index)
     if attester_index not in committee:
@@ -1448,7 +1452,9 @@ def validate_beacon_attestation_gossip(
 
     # [REJECT] The attestation signature is valid
     attester = state.validators[attester_index]
-    domain = get_domain(state, DOMAIN_BEACON_ATTESTER, target_epoch)
+    domain = compute_domain(
+        DOMAIN_BEACON_ATTESTER, compute_fork_version(target_epoch), state.genesis_validators_root
+    )
     signing_root = compute_signing_root(data, domain)
     if not bls.Verify(attester.pubkey, signing_root, attestation.signature):
         raise GossipReject("invalid attestation signature")
