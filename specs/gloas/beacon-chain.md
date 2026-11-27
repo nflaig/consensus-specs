@@ -115,7 +115,6 @@
   - [Beacon state mutators](#beacon-state-mutators)
     - [New `initiate_builder_exit`](#new-initiate_builder_exit)
     - [New `settle_builder_payment`](#new-settle_builder_payment)
-    - [Modified `slash_validator`](#modified-slash_validator)
 - [Beacon chain state transition function](#beacon-chain-state-transition-function)
   - [Modified `process_slot`](#modified-process_slot)
   - [Epoch processing](#epoch-processing)
@@ -1543,44 +1542,6 @@ def settle_builder_payment(state: BeaconState, payment_index: Uint64) -> None:
     state.builder_pending_payments[payment_index] = BuilderPendingPayment.empty()
 ```
 
-#### Modified `slash_validator`
-
-```python
-def slash_validator(
-    state: BeaconState,
-    slashed_index: ValidatorIndex,
-    whistleblower_index: ValidatorIndex | None = None,
-) -> None:
-    """
-    Slash the validator with index ``slashed_index``.
-    """
-    epoch = get_current_epoch(state)
-    initiate_validator_exit(state, slashed_index)
-    validator = state.validators[slashed_index]
-    validator.slashed = Boolean(True)
-    validator.withdrawable_epoch = max(
-        validator.withdrawable_epoch, epoch + EPOCHS_PER_SLASHINGS_VECTOR
-    )
-    state.slashings[epoch % EPOCHS_PER_SLASHINGS_VECTOR] += validator.effective_balance
-    slashing_penalty = validator.effective_balance // MIN_SLASHING_PENALTY_QUOTIENT_ELECTRA
-    decrease_balance(state, slashed_index, slashing_penalty)
-
-    # Apply proposer and whistleblower rewards
-    proposer_index = get_beacon_proposer_index(state)
-    if whistleblower_index is None:
-        whistleblower_index = proposer_index
-    whistleblower_reward = validator.effective_balance // WHISTLEBLOWER_REWARD_QUOTIENT_ELECTRA
-    proposer_reward = whistleblower_reward * PROPOSER_WEIGHT // WEIGHT_DENOMINATOR
-    increase_balance(state, proposer_index, proposer_reward)
-    increase_balance(state, whistleblower_index, whistleblower_reward - proposer_reward)
-
-    # [New in Gloas:EIP7732]
-    # Remove pending builder payments for blocks proposed by the slashed validator
-    for payment_index, payment in enumerate(state.builder_pending_payments):
-        if payment.proposer_index == slashed_index:
-            state.builder_pending_payments[payment_index] = BuilderPendingPayment.empty()
-```
-
 ## Beacon chain state transition function
 
 State transition is fundamentally modified in Gloas. The full state transition
@@ -1722,7 +1683,11 @@ def process_builder_pending_payments(state: BeaconState) -> None:
     """
     quorum = get_builder_payment_quorum_threshold(state)
     for payment in state.builder_pending_payments[:SLOTS_PER_EPOCH]:
-        if payment.weight >= quorum:
+        # Payments of slashed proposers are not paid at quorum, so a builder can
+        # withhold its payload when the proposer equivocates. A payload that is
+        # applied by the child block is still paid through settle_builder_payment.
+        proposer_slashed = state.validators[payment.proposer_index].slashed
+        if payment.weight >= quorum and not proposer_slashed:
             state.builder_pending_withdrawals.append(payment.withdrawal)
 
     old_payments = state.builder_pending_payments[SLOTS_PER_EPOCH:]

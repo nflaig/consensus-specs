@@ -58,8 +58,7 @@ def check_proposer_slashing_effect(
         - slashings[epoch % EPOCHS_PER_SLASHINGS_VECTOR] incremented by effective_balance
         - balances[slashed_index] decreased by slash penalty
         - balances[proposer_index] increased by whistleblower reward
-        - [GLOAS+] builder_pending_payments entries cleared if the slashed validator is the
-          payment's proposer, left intact otherwise
+        - [GLOAS+] builder_pending_payments left intact (slashed proposers are skipped at quorum)
     """
     current_epoch = spec.get_current_epoch(state)
     pre_validator = pre_state.validators[slashed_index]
@@ -147,13 +146,9 @@ def check_proposer_slashing_effect(
             - sc_penalty_for_slashed
         )
 
-    # GLOAS: Verify builder pending payments
+    # GLOAS: builder pending payments are untouched by the slashing
     if is_post_gloas(spec) and proposer_slashing is not None:
-        for payment_index, pre_payment in enumerate(pre_state.builder_pending_payments):
-            if pre_payment.proposer_index == slashed_index:
-                assert state.builder_pending_payments[payment_index] == spec.BuilderPendingPayment()
-            else:
-                assert state.builder_pending_payments[payment_index] == pre_payment
+        assert state.builder_pending_payments == pre_state.builder_pending_payments
 
 
 def get_valid_proposer_slashing(
