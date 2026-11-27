@@ -301,16 +301,20 @@ def validate_sync_committee_contribution_and_proof_gossip(
         slot=contribution.slot,
         subcommittee_index=contribution.subcommittee_index,
     )
-    domain = get_domain(
-        state, DOMAIN_SYNC_COMMITTEE_SELECTION_PROOF, compute_epoch_at_slot(contribution.slot)
+    domain = compute_domain(
+        DOMAIN_SYNC_COMMITTEE_SELECTION_PROOF,
+        compute_fork_version(compute_epoch_at_slot(contribution.slot)),
+        state.genesis_validators_root,
     )
     signing_root = compute_signing_root(selection_data, domain)
     if not bls.Verify(aggregator_pubkey, signing_root, contribution_and_proof.selection_proof):
         raise GossipReject("invalid selection proof signature")
 
     # [REJECT] The aggregator signature, signed_contribution_and_proof.signature, is valid
-    domain = get_domain(
-        state, DOMAIN_CONTRIBUTION_AND_PROOF, compute_epoch_at_slot(contribution.slot)
+    domain = compute_domain(
+        DOMAIN_CONTRIBUTION_AND_PROOF,
+        compute_fork_version(compute_epoch_at_slot(contribution.slot)),
+        state.genesis_validators_root,
     )
     signing_root = compute_signing_root(contribution_and_proof, domain)
     if not bls.Verify(aggregator_pubkey, signing_root, signed_contribution_and_proof.signature):
@@ -324,7 +328,11 @@ def validate_sync_committee_contribution_and_proof_gossip(
         for index, bit in enumerate(contribution.aggregation_bits)
         if bit
     ]
-    domain = get_domain(state, DOMAIN_SYNC_COMMITTEE, compute_epoch_at_slot(contribution.slot))
+    domain = compute_domain(
+        DOMAIN_SYNC_COMMITTEE,
+        compute_fork_version(compute_epoch_at_slot(contribution.slot)),
+        state.genesis_validators_root,
+    )
     signing_root = compute_signing_root(contribution.beacon_block_root, domain)
     if not eth_fast_aggregate_verify(participant_pubkeys, signing_root, contribution.signature):
         raise GossipReject("invalid aggregate signature")
