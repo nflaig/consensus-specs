@@ -440,7 +440,11 @@ attestations as described above.
 def get_payload_attestation_message_signature(
     state: BeaconState, attestation: PayloadAttestationMessage, privkey: int
 ) -> BLSSignature:
-    domain = get_domain(state, DOMAIN_PTC_ATTESTER, compute_epoch_at_slot(attestation.data.slot))
+    domain = compute_domain(
+        DOMAIN_PTC_ATTESTER,
+        compute_fork_version(compute_epoch_at_slot(attestation.data.slot)),
+        state.genesis_validators_root,
+    )
     signing_root = compute_signing_root(attestation.data, domain)
     return bls.Sign(privkey, signing_root)
 ```
