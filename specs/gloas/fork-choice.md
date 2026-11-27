@@ -594,8 +594,8 @@ def get_weight(store: Store, node: ForkChoiceNode) -> Gwei:
 ```python
 def get_filtered_node_tree(store: Store) -> Sequence[ForkChoiceNode]:
     """
-    Retrieve a filtered node tree from ``store``, only returning branches
-    whose leaf state's justified/finalized info agrees with that in ``store``.
+    Retrieve a filtered node tree from ``store``, only returning branches that
+    end in a node whose justified/finalized info agrees with that in ``store``.
     """
     # [Modified in Gloas:EIP7732]
     base = ForkChoiceNode(

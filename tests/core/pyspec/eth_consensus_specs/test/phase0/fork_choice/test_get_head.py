@@ -9,9 +9,14 @@ from eth_consensus_specs.test.context import (
 from eth_consensus_specs.test.helpers.attestations import (
     get_valid_attestation,
     next_epoch_with_attestations,
+    state_transition_with_full_block,
+)
+from eth_consensus_specs.test.helpers.attester_slashings import (
+    get_valid_attester_slashing_by_indices,
 )
 from eth_consensus_specs.test.helpers.block import (
     apply_empty_block,
+    build_empty_block,
     build_empty_block_for_next_slot,
     get_proposer_index_maybe,
 )
@@ -25,14 +30,17 @@ from eth_consensus_specs.test.helpers.fork_choice import (
     add_attester_slashing,
     add_block,
     apply_next_epoch_with_attestations,
+    apply_next_slots_with_attestations,
     check_head_against_root,
     get_anchor_root,
     get_formatted_head_output,
     get_genesis_forkchoice_store_and_block,
     on_tick_and_append_step,
     output_head_check,
+    setup_finalized_store,
     tick_and_add_block,
     tick_and_run_on_attestation,
+    tick_store_to_slot,
 )
 from eth_consensus_specs.test.helpers.forks import (
     is_post_altair,
@@ -760,6 +768,115 @@ def test_voting_source_beyond_two_epoch(spec, state):
         store, last_fork_block_root, store.finalized_checkpoint.epoch
     )
     check_head_against_root(spec, store, correct_head)
+
+    yield "steps", test_steps
+
+
+@with_altair_and_later
+@spec_state_test
+@with_presets([MINIMAL], reason="too slow")
+def test_voting_source_no_viable_descendants(spec, state):
+    """
+    Check that the store allows for a head block that has descendants when:
+    - store.voting_source[block_root].epoch == store.justified_checkpoint.epoch, and
+    - store.voting_source[descendant_root].epoch != store.justified_checkpoint.epoch, and
+    - store.voting_source[descendant_root].epoch + 2 < current_epoch
+    for every descendant of the block.
+    """
+    store, state, test_steps = yield from setup_finalized_store(spec, state)
+    assert spec.compute_epoch_at_slot(spec.get_current_slot(store)) == 4
+    assert state.current_justified_checkpoint.epoch == store.justified_checkpoint.epoch == 3
+
+    # The balance of `attesters` is just below 2/3 of the total active balance,
+    # the vote of `late_attester` brings it to 2/3
+    total_balance = spec.get_total_active_balance(state)
+    attesters = set()
+    attesting_balance = 0
+    late_attester = None
+    for index in spec.get_active_validator_indices(state, spec.get_current_epoch(state)):
+        attesting_balance += state.validators[index].effective_balance
+        if attesting_balance * 3 >= total_balance * 2:
+            late_attester = index
+            break
+        attesters.add(index)
+    assert late_attester is not None
+
+    def participation_fn(_slot, _committee_index, committee):
+        return committee & attesters
+
+    # Fill epoch 4 with the votes of `attesters`, epoch 4 is not justified
+    state, store, _ = yield from apply_next_slots_with_attestations(
+        spec,
+        state,
+        store,
+        spec.SLOTS_PER_EPOCH - 1,
+        fill_cur_epoch=True,
+        fill_prev_epoch=False,
+        test_steps=test_steps,
+        participation_fn=participation_fn,
+    )
+    assert spec.get_current_epoch(state) == 4
+    assert store.unrealized_justified_checkpoint.epoch == 3
+
+    # The first block of epoch 5 includes the vote of `late_attester` for epoch 4,
+    # its pulled-up state justifies epoch 4
+    _, committee_index, slot = spec.get_committee_assignment(
+        state, spec.get_current_epoch(state), late_attester
+    )
+    late_attestation = get_valid_attestation(
+        spec,
+        state,
+        slot=slot,
+        index=committee_index,
+        filter_participant_set=lambda committee: committee & {late_attester},
+        signed=True,
+    )
+    block = build_empty_block_for_next_slot(spec, state)
+    block.body.attestations.append(late_attestation)
+    signed_block = state_transition_with_full_block(
+        spec,
+        state,
+        fill_cur_epoch=True,
+        fill_prev_epoch=False,
+        participation_fn=participation_fn,
+        block=block,
+    )
+    yield from tick_and_add_block(spec, store, signed_block, test_steps)
+    block_root = signed_block.message.hash_tree_root()
+    assert spec.get_current_epoch(state) == 5
+    assert store.unrealized_justifications[block_root].epoch == 4
+
+    # The next block slashes `late_attester`, its pulled-up state does not justify epoch 4
+    attester_slashing = get_valid_attester_slashing_by_indices(
+        spec, state, [late_attester], signed_1=True, signed_2=True
+    )
+    block = build_empty_block_for_next_slot(spec, state)
+    block.body.attester_slashings.append(attester_slashing)
+    signed_block = state_transition_and_sign_block(spec, state, block)
+    yield from tick_and_add_block(spec, store, signed_block, test_steps)
+    descendant_root = signed_block.message.hash_tree_root()
+    assert state.validators[late_attester].slashed
+    assert store.unrealized_justifications[descendant_root].epoch == 3
+    assert store.justified_checkpoint.epoch == 3
+    check_head_against_root(spec, store, descendant_root)
+
+    # At the start of epoch 6, the store's justified checkpoint is updated to epoch 4
+    tick_store_to_slot(spec, store, spec.compute_start_slot_at_epoch(6), test_steps)
+    assert store.justified_checkpoint.epoch == 4
+    assert spec.get_voting_source(store, block_root).epoch == 4
+    assert spec.get_voting_source(store, descendant_root).epoch == 3
+
+    # The descendant is not viable and the block itself is, so the block is the head
+    check_head_against_root(spec, store, block_root)
+    output_head_check(spec, store, test_steps)
+
+    # A block built on the head becomes the new head
+    state = store.block_states[block_root].copy()
+    block = build_empty_block(spec, state, slot=spec.get_current_slot(store))
+    signed_block = state_transition_and_sign_block(spec, state, block)
+    yield from tick_and_add_block(spec, store, signed_block, test_steps)
+    assert state.current_justified_checkpoint.epoch == 4
+    check_head_against_root(spec, store, signed_block.message.hash_tree_root())
 
     yield "steps", test_steps
 

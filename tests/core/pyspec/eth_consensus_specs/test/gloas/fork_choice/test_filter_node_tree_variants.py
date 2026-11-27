@@ -3,7 +3,14 @@ from eth_consensus_specs.test.context import (
     with_gloas_and_later,
     with_presets,
 )
-from eth_consensus_specs.test.helpers.attestations import get_valid_attestation_at_slot
+from eth_consensus_specs.test.helpers.attestations import (
+    get_valid_attestation,
+    get_valid_attestation_at_slot,
+    state_transition_with_full_block,
+)
+from eth_consensus_specs.test.helpers.attester_slashings import (
+    get_valid_attester_slashing_by_indices,
+)
 from eth_consensus_specs.test.helpers.block import build_empty_block_for_next_slot
 from eth_consensus_specs.test.helpers.constants import MINIMAL
 from eth_consensus_specs.test.helpers.execution_payload import (
@@ -12,11 +19,13 @@ from eth_consensus_specs.test.helpers.execution_payload import (
 )
 from eth_consensus_specs.test.helpers.fork_choice import (
     add_execution_payload,
+    apply_next_slots_with_attestations,
     on_tick_and_append_step,
     output_head_check,
     setup_finalized_store,
     tick_and_add_block,
     tick_and_run_on_attestation,
+    tick_store_to_slot,
 )
 from eth_consensus_specs.test.helpers.state import (
     next_slots,
@@ -352,6 +361,137 @@ def test_get_filtered_node_tree_contains_both_viable_childless_variants(spec, st
     filtered_tree = spec.get_filtered_node_tree(store)
     assert full_b_node in filtered_tree
     assert empty_b_node in filtered_tree
+
+    output_head_check(spec, store, test_steps)
+    yield "steps", test_steps
+
+
+@with_gloas_and_later
+@with_presets([MINIMAL], reason="too slow")
+@spec_state_test
+def test_get_head_returns_viable_full_variant_with_unviable_child(spec, state):
+    """
+    The FULL payload-status variant of a block that passes the FFG test must be
+    returned by get_head when its only child fails the FFG test.
+
+    The votes for epoch 4 stay just below 2/3 of the total active balance until
+    block B, the first block of epoch 5, includes one more vote. B's voting
+    source is therefore pulled up to epoch 4. S builds on FULL(B) and slashes
+    that attester, so S's voting source stays at epoch 3. Once the store's
+    justified checkpoint advances to epoch 4 at the start of epoch 6, S fails
+    the FFG test while B passes it. EMPTY(B) is childless and FULL(B) is
+    supported by the votes for S, so get_head must return FULL(B).
+    """
+    store, state, test_steps = yield from setup_finalized_store(spec, state)
+    assert spec.compute_epoch_at_slot(spec.get_current_slot(store)) == 4
+    assert store.justified_checkpoint.epoch == 3
+
+    # The balance of `attesters` is just below 2/3 of the total active balance,
+    # the vote of `late_attester` brings it to 2/3
+    total_balance = spec.get_total_active_balance(state)
+    attesters = set()
+    attesting_balance = 0
+    late_attester = None
+    for index in spec.get_active_validator_indices(state, spec.get_current_epoch(state)):
+        attesting_balance += state.validators[index].effective_balance
+        if attesting_balance * 3 >= total_balance * 2:
+            late_attester = index
+            break
+        attesters.add(index)
+    assert late_attester is not None
+
+    def participation_fn(_slot, _committee_index, committee):
+        return committee & attesters
+
+    # Fill epoch 4 with the votes of `attesters`, epoch 4 is not justified
+    state, store, _ = yield from apply_next_slots_with_attestations(
+        spec,
+        state,
+        store,
+        spec.SLOTS_PER_EPOCH - 1,
+        fill_cur_epoch=True,
+        fill_prev_epoch=False,
+        test_steps=test_steps,
+        participation_fn=participation_fn,
+    )
+    assert store.unrealized_justified_checkpoint.epoch == 3
+
+    # B is the first block of epoch 5 and includes the vote of `late_attester`
+    # for epoch 4, so its voting source is pulled up to epoch 4. B commits to a
+    # distinct block hash so that a child can build on its payload.
+    _, committee_index, slot = spec.get_committee_assignment(
+        state, spec.get_current_epoch(state), late_attester
+    )
+    late_attestation = get_valid_attestation(
+        spec,
+        state,
+        slot=slot,
+        index=committee_index,
+        filter_participant_set=lambda committee: committee & {late_attester},
+        signed=True,
+    )
+    b_block = build_empty_block_for_next_slot(spec, state)
+    b_block.body.attestations.append(late_attestation)
+    b_block_hash = spec.Hash32(b"\x42" * 32)
+    b_block.body.signed_execution_payload_bid.message.block_hash = b_block_hash
+    signed_b = state_transition_with_full_block(
+        spec,
+        state,
+        fill_cur_epoch=True,
+        fill_prev_epoch=False,
+        participation_fn=participation_fn,
+        block=b_block,
+    )
+    yield from tick_and_add_block(spec, store, signed_b, test_steps)
+    b_root = signed_b.message.hash_tree_root()
+    assert store.unrealized_justifications[b_root].epoch == 4
+
+    # Deliver B's envelope so the FULL(B) variant exists
+    envelope = build_signed_execution_payload_envelope(
+        spec, store.block_states[b_root], b_root, signed_b
+    )
+    yield from add_execution_payload(spec, store, envelope, test_steps)
+    assert spec.is_payload_verified(store, b_root)
+
+    # S builds on FULL(B) and slashes `late_attester`, so its voting source
+    # stays at epoch 3
+    attester_slashing = get_valid_attester_slashing_by_indices(
+        spec, state, [late_attester], signed_1=True, signed_2=True
+    )
+    s_block = build_empty_block_for_next_slot(spec, state)
+    s_block.body.attester_slashings.append(attester_slashing)
+    s_block.body.signed_execution_payload_bid.message.parent_block_hash = b_block_hash
+    signed_s = state_transition_and_sign_block(spec, state, s_block)
+    yield from tick_and_add_block(spec, store, signed_s, test_steps)
+    s_root = signed_s.message.hash_tree_root()
+    assert spec.get_parent_payload_status(store, signed_s.message) == spec.PAYLOAD_STATUS_FULL
+    assert store.unrealized_justifications[s_root].epoch == 3
+    assert spec.get_head(store).root == s_root
+
+    # Attest S, the votes support FULL(B)
+    attestation = get_valid_attestation_at_slot(state, spec, state.slot)
+    yield from tick_and_run_on_attestation(spec, store, attestation, test_steps)
+
+    # At the start of epoch 6, the store's justified checkpoint advances to
+    # epoch 4. S fails the FFG test, B passes it.
+    tick_store_to_slot(spec, store, spec.compute_start_slot_at_epoch(6), test_steps)
+    assert store.justified_checkpoint.epoch == 4
+    assert spec.get_voting_source(store, b_root).epoch == 4
+    assert spec.get_voting_source(store, s_root).epoch == 3
+
+    full_b_node = spec.ForkChoiceNode(root=b_root, payload_status=spec.PAYLOAD_STATUS_FULL)
+    empty_b_node = spec.ForkChoiceNode(root=b_root, payload_status=spec.PAYLOAD_STATUS_EMPTY)
+    pending_s_node = spec.ForkChoiceNode(root=s_root, payload_status=spec.PAYLOAD_STATUS_PENDING)
+
+    # Both variants of B are in the filtered tree, S is not
+    filtered_tree = spec.get_filtered_node_tree(store)
+    assert full_b_node in filtered_tree
+    assert empty_b_node in filtered_tree
+    assert pending_s_node not in filtered_tree
+
+    # FULL(B) carries the votes for S and is the head
+    assert spec.get_weight(store, full_b_node) > spec.get_weight(store, empty_b_node)
+    assert spec.get_head(store) == full_b_node
 
     output_head_check(spec, store, test_steps)
     yield "steps", test_steps
