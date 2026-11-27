@@ -440,7 +440,11 @@ the BLS private key associated with the validator.
 def get_sync_committee_selection_proof(
     state: BeaconState, slot: Slot, subcommittee_index: Uint64, privkey: int
 ) -> BLSSignature:
-    domain = get_domain(state, DOMAIN_SYNC_COMMITTEE_SELECTION_PROOF, compute_epoch_at_slot(slot))
+    domain = compute_domain(
+        DOMAIN_SYNC_COMMITTEE_SELECTION_PROOF,
+        compute_fork_version(compute_epoch_at_slot(slot)),
+        state.genesis_validators_root,
+    )
     signing_data = SyncAggregatorSelectionData(
         slot=slot,
         subcommittee_index=subcommittee_index,
@@ -568,8 +572,10 @@ def get_contribution_and_proof_signature(
     state: BeaconState, contribution_and_proof: ContributionAndProof, privkey: int
 ) -> BLSSignature:
     contribution = contribution_and_proof.contribution
-    domain = get_domain(
-        state, DOMAIN_CONTRIBUTION_AND_PROOF, compute_epoch_at_slot(contribution.slot)
+    domain = compute_domain(
+        DOMAIN_CONTRIBUTION_AND_PROOF,
+        compute_fork_version(compute_epoch_at_slot(contribution.slot)),
+        state.genesis_validators_root,
     )
     signing_root = compute_signing_root(contribution_and_proof, domain)
     return bls.Sign(privkey, signing_root)
